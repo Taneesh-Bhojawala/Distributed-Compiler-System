@@ -47,16 +47,34 @@ int main()
         printf("\n + New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
         NetworkPacket packet;
-        char temp_filename[300];
-        FILE *fp;
+        char dir_path[300];
+        char filepath[1024];
+        FILE *fp = NULL;
 
-        ssize_t bytes = read(client_socket, &packet, sizeof(NetworkPacket));
-        snprintf(temp_filename, sizeof(temp_filename), "received_%s_%d", packet.file_name, packet.session_id);
-        fp = fopen(temp_filename, "ab"); 
-        printf(" -> Receiving file stream: %s\n", packet.file_name);
-        fwrite(packet.data, 1, packet.file_size, fp);
+        while(1)
+        {
+            ssize_t bytes = read(client_socket, &packet, sizeof(NetworkPacket));
 
-        fclose(fp);
+            if(bytes<=0) break;
+
+            if(fp == NULL)
+            {
+                snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
+                mkdir(dir_path, 0744);
+
+                snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
+                fp = fopen(filepath, "ab");
+                printf(" -> Receiving file stream\n");
+            }
+            fwrite(packet.data, 1, packet.file_size, fp);
+            if(packet.is_last_chunk == 1)
+            {
+                printf("File received completely\n");
+                break;
+            }
+        }
+        if(fp != NULL) fclose(fp);
+        close(client_socket);
     }
     close(server_fd);
     return 0;
