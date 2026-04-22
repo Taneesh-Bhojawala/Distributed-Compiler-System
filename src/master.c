@@ -45,5 +45,19 @@ int main()
         }
 
         printf("\n + New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+        NetworkPacket packet;
+        char temp_filename[300];
+        FILE *fp;
+
+        ssize_t bytes = read(client_socket, &packet, sizeof(NetworkPacket));
+        snprintf(temp_filename, sizeof(temp_filename), "received_%s_%d", packet.file_name, packet.session_id);
+        fp = fopen(temp_filename, "ab"); 
+        printf(" -> Receiving file stream: %s\n", packet.file_name);
+        fwrite(packet.data, 1, packet.file_size, fp);
+
+        fclose(fp);
     }
+    close(server_fd);
+    return 0;
 }
