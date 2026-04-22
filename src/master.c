@@ -53,7 +53,7 @@ int main()
 
         while(1)
         {
-            ssize_t bytes = read(client_socket, &packet, sizeof(NetworkPacket));
+            ssize_t bytes = recv(client_socket, &packet, sizeof(NetworkPacket), MSG_WAITALL);
 
             if(bytes<=0) break;
 

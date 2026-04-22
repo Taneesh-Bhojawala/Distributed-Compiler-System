@@ -9,9 +9,20 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <string.h>
 
-#define MAX_BUFF 4096
+#define MAX_BUFF 65536
 #define PORT 8080
 
+typedef struct
+{
+    int session_id;
+    char file_name[256];
+    int file_size;
+    int is_last_chunk;
+    char role[16];
+    char data[MAX_BUFF];
+} NetworkPacket;
+ 
 #endif

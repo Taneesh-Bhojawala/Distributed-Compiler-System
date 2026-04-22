@@ -30,7 +30,6 @@ int main(int argc, char *argv[])
     
 
     FILE *fp = fopen(argv[1], "rb");
-    fseek(fp, 0, SEEK_SET);
     if(fp == NULL)
     {
         perror("Error");
@@ -48,10 +47,10 @@ int main(int argc, char *argv[])
 
         packet.file_size = fread(packet.data, 1, MAX_BUFF-1, fp);
 
-        if(packet.file_size<MAX_BUFF) packet.is_last_chunk = 1;
+        if(packet.file_size<MAX_BUFF-1) packet.is_last_chunk = 1;
         else packet.is_last_chunk = 0;
 
-        if(write(sd, &packet, sizeof(NetworkPacket)) == -1)
+        if(send(sd, &packet, sizeof(NetworkPacket), 0) == -1)
         {
             perror("Write failed");
             return -1;
