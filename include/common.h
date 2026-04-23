@@ -24,5 +24,10 @@ typedef struct
     char role[16];
     char data[MAX_BUFF];
 } NetworkPacket;
- 
+
+// typedef struct
+// {
+//     int client_socket;
+//     struct sockaddr_in client_addr;
+// } ThreadArgs;
 #endif

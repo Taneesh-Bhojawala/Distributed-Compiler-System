@@ -2,11 +2,12 @@
 
 int main(int argc, char *argv[])
 {
-    if(argc<2)
+    if(argc<3)
     {
         printf("Use: %s <file_to_send>\n", argv[0]);
         return -1;
     }
+    int current_session = atoi(argv[2]);
 
     struct sockaddr_in server_addr;
     int sd = socket(AF_INET, SOCK_STREAM, 0);
@@ -41,7 +42,7 @@ int main(int argc, char *argv[])
     {
         //making custom packet for testing
         memset(&packet, 0, sizeof(NetworkPacket));  //required as when testing found that there may be garbage value, like if file size if only 50B, rest will be filled with garbage in the data array
-        packet.session_id = 999;
+        packet.session_id = current_session;
         strcpy(packet.role, "admin");
         strcpy(packet.file_name, argv[1]);
 
