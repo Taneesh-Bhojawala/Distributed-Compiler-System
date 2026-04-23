@@ -15,8 +15,16 @@
 #define MAX_BUFF 65536
 #define PORT 8080
 
+typedef enum
+{
+    CMD_WORKER_READY,
+    CMD_SUBMIT_JOB,
+    CMD_RETURN_OBJ
+} CommandType;
+
 typedef struct
 {
+    CommandType type;
     int session_id;
     char file_name[256];
     int file_size;
@@ -25,9 +33,4 @@ typedef struct
     char data[MAX_BUFF];
 } NetworkPacket;
 
-// typedef struct
-// {
-//     int client_socket;
-//     struct sockaddr_in client_addr;
-// } ThreadArgs;
 #endif

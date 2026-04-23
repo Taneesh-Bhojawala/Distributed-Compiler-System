@@ -46,7 +46,7 @@ int main()
             continue;
         }
 
-        printf("\n + New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        printf("\n+ New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
         //need to specifically allocte the memory on the heap or else if global is used, it might be overwritten by the next client before the thread actually schedules
         int *new_socket = malloc(sizeof(int));
@@ -76,7 +76,7 @@ void *handle_connection(void *arg)
     NetworkPacket packet;
     char dir_path[300];
     char filepath[1024];
-    FILE *fp = NULL;
+    int fd = -1;
 
     while(1)
     {
@@ -84,23 +84,23 @@ void *handle_connection(void *arg)
 
         if(bytes<=0) break;
 
-        if(fp == NULL)
+        if(fd == -1)
         {
             snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
             mkdir(dir_path, 0744);
 
             snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
-            fp = fopen(filepath, "ab");
+            fd = open(filepath, O_WRONLY | O_CREAT | O_APPEND, 0644);
             printf(" -> Receiving file stream\n");
         }
-        fwrite(packet.data, 1, packet.file_size, fp);
+        write(fd, packet.data, packet.file_size);
         if(packet.is_last_chunk == 1)
         {
-            printf("File received completely\n");
+            printf(" File received completely\n");
             break;
         }
     }
-    if(fp != NULL) fclose(fp);
+    if(fd != -1) close(fd);
     close(client_socket);
 
     pthread_exit(NULL);

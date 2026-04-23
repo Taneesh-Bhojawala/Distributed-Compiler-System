@@ -4,7 +4,7 @@ int main(int argc, char *argv[])
 {
     if(argc<3)
     {
-        printf("Use: %s <file_to_send>\n", argv[0]);
+        printf("Use: %s <file_to_send> session\n", argv[0]);
         return -1;
     }
     int current_session = atoi(argv[2]);
@@ -30,8 +30,8 @@ int main(int argc, char *argv[])
 
     
 
-    FILE *fp = fopen(argv[1], "rb");
-    if(fp == NULL)
+    int fd = open(argv[1], O_RDONLY);
+    if(fd == -1)
     {
         perror("Error");
         close(sd);
@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
         strcpy(packet.role, "admin");
         strcpy(packet.file_name, argv[1]);
 
-        packet.file_size = fread(packet.data, 1, MAX_BUFF-1, fp);
+        packet.file_size = read(fd, packet.data, MAX_BUFF-1);
 
         if(packet.file_size<MAX_BUFF-1) packet.is_last_chunk = 1;
         else packet.is_last_chunk = 0;
@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
         if(packet.is_last_chunk == 1) break;
     }
     
-    fclose(fp);
+    close(fd);
     printf(" + File uploaded!\n");
     close(sd);
     return 0;
