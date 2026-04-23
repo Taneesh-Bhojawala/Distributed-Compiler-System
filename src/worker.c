@@ -36,21 +36,42 @@ int main()
 
     printf("\nWorker ready sent. Waiting for job...\n");
 
+    mkdir("../temp", 0777);
+
     while(1)
     {
         int src_fd = -1;
-        char temp_src[256] = "task.cpp";
-        char temp_obj[256] = "task.o";
+        char temp_src[256];
+        char temp_obj[256];
         int curr_session = 0;
+        char original_filename[256];
+
+        snprintf(temp_src, sizeof(temp_src), "../temp/worker_%d.c", getpid());
+        snprintf(temp_obj, sizeof(temp_obj), "../temp/worker_%d.o", getpid());
 
         while(1)
         {
             ssize_t bytes = recv(sd, &packet, sizeof(NetworkPacket), MSG_WAITALL);
+            
+            if (bytes <= 0) {
+                printf("\nMaster disconnected. Shutting down worker.\n");
+                close(sd);
+                exit(0); 
+            }
+
             if(src_fd == -1)
             {
                 curr_session = packet.session_id;
-                src_fd = open(temp_src, O_WRONLY|O_CREAT|O_TRUNC, 0644);
-                printf("Receiving code from master for session: %d\n", curr_session);
+                
+                strcpy(original_filename, packet.file_name); 
+                
+                src_fd = open(temp_src, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (src_fd == -1)
+                {
+                    perror("Worker failed to create temp source file");
+                    break;
+                }
+                printf("\nReceiving code %s from master for session: %d\n", original_filename, curr_session);
             }
             write(src_fd, packet.data, packet.file_size);
             if(packet.is_last_chunk == 1) break;
@@ -65,32 +86,39 @@ int main()
             perror("Execlp failed");
             exit(-1);
         }
-        else
+        else if (pid > 0)
         {
             int status;
             waitpid(pid, &status, 0);
-            //from man page
+            
             if(WIFEXITED(status) && WEXITSTATUS(status) == 0)
             {
                 printf("Compilation successful. Sending .o file back...\n");
                 
+                //convert "file1.c" into "file1.o"
+                char *dot = strrchr(original_filename, '.'); 
+                if(dot != NULL) strcpy(dot, ".o"); 
+                else strcat(original_filename, ".o");
+
                 int obj_fd = open(temp_obj, O_RDONLY);
                 if(obj_fd == -1)
                 {
-                    perror("Couldnt open file");
+                    perror("Couldnt open compiled object file");
                     continue;
                 }
+                
                 while (1)
                 {
                     memset(&packet, 0, sizeof(NetworkPacket));
                     packet.session_id = curr_session;
                     packet.type = CMD_RETURN_OBJ;
                     strcpy(packet.role, "worker");
-                    strcpy(packet.file_name, temp_obj);
+                    
+                    strcpy(packet.file_name, original_filename);
 
                     packet.file_size = read(obj_fd, packet.data, MAX_BUFF-1);
 
-                    if(packet.file_size<MAX_BUFF-1) packet.is_last_chunk = 1;
+                    if(packet.file_size < MAX_BUFF-1) packet.is_last_chunk = 1;
                     else packet.is_last_chunk = 0;
 
                     if(send(sd, &packet, sizeof(NetworkPacket), 0) == -1)
@@ -102,11 +130,12 @@ int main()
                     if(packet.is_last_chunk == 1) break;
                 }
                 close(obj_fd);
-                printf(".o file successfully sent back\n");
+                printf("Object file %s successfully sent back.\n", original_filename);
+
             }
             else
             {
-                printf("Compilation failed\n");
+                printf("Compilation failed for %s\n", original_filename);
             }
         }
     }

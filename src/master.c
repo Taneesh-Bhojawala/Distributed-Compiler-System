@@ -1,5 +1,10 @@
 #include "../include/common.h"
 
+int worker_sockets[2];
+int worker_busy[2];
+int workers = 0;
+pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void *handle_connection(void *arg);
 
 int main()
@@ -70,38 +75,131 @@ int main()
 
 void *handle_connection(void *arg)
 {
-    int client_socket = *(int*) arg;
+    int soc = *(int*) arg;
     free(arg);
 
     NetworkPacket packet;
     char dir_path[300];
     char filepath[1024];
-    int fd = -1;
 
-    while(1)
+    if(recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
     {
-        ssize_t bytes = recv(client_socket, &packet, sizeof(NetworkPacket), MSG_WAITALL);
-
-        if(bytes<=0) break;
-
-        if(fd == -1)
-        {
-            snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
-            mkdir(dir_path, 0744);
-
-            snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
-            fd = open(filepath, O_WRONLY | O_CREAT | O_APPEND, 0644);
-            printf(" -> Receiving file stream\n");
-        }
-        write(fd, packet.data, packet.file_size);
-        if(packet.is_last_chunk == 1)
-        {
-            printf(" File received completely\n");
-            break;
-        }
+        printf("Connection terminated\n");
+        close(soc);
+        pthread_exit(NULL);
     }
-    if(fd != -1) close(fd);
-    close(client_socket);
 
+
+    if(packet.type == CMD_WORKER_READY)
+    {
+        pthread_mutex_lock(&worker_mutex);
+        int worker_id = workers;
+        worker_sockets[worker_id] = soc;
+        worker_busy[worker_id] = 0;
+        workers++;
+
+        printf("\nWorker %d connected. Total workers: %d\n", worker_id, workers);
+        pthread_mutex_unlock(&worker_mutex);
+
+        int obj_fd = -1;
+        while(1)
+        {
+            ssize_t bytes = recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL);
+            if(bytes<=0) break;
+
+            if(packet.type == CMD_RETURN_OBJ)
+            {
+                if(obj_fd == -1)
+                {
+                    snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
+                    mkdir(dir_path, 0744);
+                    snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
+                    
+                    obj_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    printf("\n -> Receiving compiled object: %s from Worker %d\n", packet.file_name, worker_id);
+                }
+                write(obj_fd, packet.data, packet.file_size);
+                if(packet.is_last_chunk == 1)
+                {
+                    printf("Object file saved\n");
+                    close(obj_fd);
+                    obj_fd = -1;
+
+                    pthread_mutex_lock(&worker_mutex);
+                    worker_busy[worker_id] = 0;
+                    pthread_mutex_unlock(&worker_mutex);
+                }
+            }
+        }
+        printf("Worker %d disconnected\n", worker_id);
+    }
+
+    else if(packet.type == CMD_SUBMIT_JOB)
+    {
+        printf("Client submitted file: %s\n", packet.file_name);
+        snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
+        mkdir(dir_path, 0744);
+        snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
+        
+        int src_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        write(src_fd, packet.data, packet.file_size);
+        while(packet.is_last_chunk == 0)
+        {
+            recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL);
+            write(src_fd, packet.data, packet.file_size);
+        }
+        close(src_fd);
+        printf(" -> Source code %s saved. Finding idle worker...\n", packet.file_name);
+
+        int assigned_worker_soc = -1;
+        int assigned_worker_id = -1;
+
+        while(assigned_worker_soc == -1)
+        {
+            pthread_mutex_lock(&worker_mutex);
+            for(int i = 0; i<2; i++)
+            {
+                if(worker_busy[i] == 0)
+                {
+                    worker_busy[i] = 1;
+                    assigned_worker_soc = worker_sockets[i];
+                    assigned_worker_id = i;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&worker_mutex);
+            if(assigned_worker_soc == -1)
+            {
+                printf("All workers busy. Trying in 1 second...\n");
+                sleep(1);
+            }
+        }
+        printf("Worker found\n");
+
+        int session_id = packet.session_id;
+        char file_name[256];
+        strcpy(file_name, packet.file_name);
+
+        int file_fd = open(filepath, O_RDONLY);
+        while(1)
+        {
+            memset(&packet, 0, sizeof(NetworkPacket));
+            packet.session_id = session_id; 
+            packet.type = CMD_SUBMIT_JOB;
+            strcpy(packet.role, "master");
+            strcpy(packet.file_name, file_name); 
+
+            packet.file_size = read(file_fd, packet.data, MAX_BUFF - 1);
+            if(packet.file_size < MAX_BUFF - 1) packet.is_last_chunk = 1;
+            else packet.is_last_chunk = 0;
+
+            send(assigned_worker_soc, &packet, sizeof(NetworkPacket), 0);
+            if(packet.is_last_chunk == 1) break;
+        }
+        close(file_fd);
+        printf(" -> Job sent to worker %d.\n", assigned_worker_id);
+
+    }
+    close(soc);
     pthread_exit(NULL);
 }

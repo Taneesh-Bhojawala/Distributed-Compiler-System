@@ -42,6 +42,7 @@ int main(int argc, char *argv[])
     {
         //making custom packet for testing
         memset(&packet, 0, sizeof(NetworkPacket));  //required as when testing found that there may be garbage value, like if file size if only 50B, rest will be filled with garbage in the data array
+        packet.type = CMD_SUBMIT_JOB;
         packet.session_id = current_session;
         strcpy(packet.role, "admin");
         strcpy(packet.file_name, argv[1]);
