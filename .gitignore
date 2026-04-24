@@ -1,6 +1,6 @@
 # Ignore compiled executables and build output
 /src/master
 /src/client
-/tests/testfile.c
+/tests/
 /build/
 /temp

@@ -34,7 +34,7 @@ int main()
         exit(-1);
     }
 
-    if(listen(server_fd, 10) == -1)
+    if(listen(server_fd, SOMAXCONN) == -1)
     {
         perror("Listen failed");
         exit(-1);

@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <string.h>
 
 #define MAX_BUFF 65536
