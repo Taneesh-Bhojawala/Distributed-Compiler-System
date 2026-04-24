@@ -130,6 +130,14 @@ void *handle_connection(void *arg)
                     pthread_mutex_unlock(&worker_mutex);
                 }
             }
+            else if(packet.type == CMD_COMPILATION_ERROR)
+            {
+                printf("Error: Worker %d failed to compile %s\n", worker_id, packet.file_name);
+                printf("Compiler error message:\n%s\n", packet.data);
+                pthread_mutex_lock(&worker_mutex);
+                worker_busy[worker_id] = 0;
+                pthread_mutex_unlock(&worker_mutex);
+            }
         }
         printf("Worker %d disconnected\n", worker_id);
     }

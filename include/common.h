@@ -20,7 +20,8 @@ typedef enum
 {
     CMD_WORKER_READY,
     CMD_SUBMIT_JOB,
-    CMD_RETURN_OBJ
+    CMD_RETURN_OBJ,
+    CMD_COMPILATION_ERROR
 } CommandType;
 
 typedef struct
