@@ -35,18 +35,10 @@ void *handle_upload(void *arg)
 
         snprintf(filepath, sizeof(filepath), "%s/%s", args->dir_path, filename);
 
-        struct sockaddr_in server_addr;
-        int sd = socket(AF_INET, SOCK_STREAM, 0);
-        if(sd == -1) continue;
-
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-        server_addr.sin_port = htons(PORT);
-        
-        if(connect(sd, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1)
+        int sd = connect_to_server("127.0.0.1", PORT);
+        if(sd == -1)
         {
             perror("Connection failed");
-            close(sd);
             continue;
         }
 
@@ -141,14 +133,10 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    int always_on_socket = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in ser_addr;
-    ser_addr.sin_family = AF_INET;
-    ser_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    ser_addr.sin_port = htons(PORT);
-    if(connect(always_on_socket, (struct sockaddr *) &ser_addr, sizeof(ser_addr)) == -1)
+    int always_on_socket = connect_to_server("127.0.0.1", PORT);
+    if(always_on_socket == -1)
     {
-        perror("Always on connection failed");
+        perror("Connection to client alwasy on failed");
         return -1;
     }
 

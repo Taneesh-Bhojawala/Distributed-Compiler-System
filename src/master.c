@@ -15,10 +15,12 @@ SessionInfo sessions[MAX_SESSIONS];
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //Worker Registry
-int worker_sockets[2];
-int worker_busy[2];
+#define MAX_WORKERS 3
+int worker_sockets[MAX_WORKERS];
+int worker_busy[MAX_WORKERS];
 int workers = 0;
 pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t worker_free_cv = PTHREAD_COND_INITIALIZER;
 
 void *handle_connection(void *arg);
 
@@ -186,6 +188,7 @@ void *handle_connection(void *arg)
 
                     pthread_mutex_lock(&worker_mutex);
                     worker_busy[worker_id] = 0;
+                    pthread_cond_signal(&worker_free_cv);
                     pthread_mutex_unlock(&worker_mutex);
                 }
             }
@@ -211,9 +214,14 @@ void *handle_connection(void *arg)
 
                 pthread_mutex_lock(&worker_mutex);
                 worker_busy[worker_id] = 0;
+                pthread_cond_signal(&worker_free_cv);
                 pthread_mutex_unlock(&worker_mutex);
             }
         }
+        pthread_mutex_lock(&worker_mutex);
+        worker_busy[worker_id] = 0;
+        pthread_cond_signal(&worker_free_cv);
+        pthread_mutex_unlock(&worker_mutex);
         printf("Worker %d disconnected\n", worker_id);
     }
 
@@ -237,10 +245,10 @@ void *handle_connection(void *arg)
         int assigned_worker_soc = -1;
         int assigned_worker_id = -1;
 
+        pthread_mutex_lock(&worker_mutex);
         while(assigned_worker_soc == -1)
         {
-            pthread_mutex_lock(&worker_mutex);
-            for(int i = 0; i<2; i++)
+            for(int i = 0; i<MAX_WORKERS; i++)
             {
                 if(worker_busy[i] == 0)
                 {
@@ -250,13 +258,14 @@ void *handle_connection(void *arg)
                     break;
                 }
             }
-            pthread_mutex_unlock(&worker_mutex);
-            if(assigned_worker_soc == -1)
+            if(assigned_worker_soc != -1)
             {
-                printf("All workers busy. Trying in 1 second...\n");
-                sleep(1);
+                break;
             }
+            pthread_cond_wait(&worker_free_cv, &worker_mutex);
         }
+        pthread_mutex_unlock(&worker_mutex);
+
         printf("Worker found\n");
 
         int session_id = packet.session_id;

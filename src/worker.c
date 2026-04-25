@@ -1,24 +1,13 @@
 #include "../include/common.h"
-#include <sys/wait.h>
+
 
 int main()
 {
-    struct sockaddr_in server_addr;
-    int sd = socket(AF_INET, SOCK_STREAM, 0);
+    int sd = connect_to_server("127.0.0.1", PORT);
     if(sd == -1)
     {
-        perror("Socket error");
-        exit(-1);
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-    server_addr.sin_port = htons(PORT);
-
-    if(connect(sd, (struct sockaddr *) &server_addr, sizeof(server_addr)) == -1)
-    {
-        perror("Connection Error");
-        exit(-1);
+        perror("Failed to connect to master");
+        return -1;
     }
     printf("\n+ Worker connected to master\n");
 

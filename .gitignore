@@ -1,6 +1,7 @@
 # Ignore compiled executables and build output
 /src/master
 /src/client
+/src/worker
 /tests/
 /build/
 /temp
