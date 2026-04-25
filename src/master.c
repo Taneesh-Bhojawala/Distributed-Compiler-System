@@ -15,7 +15,7 @@ SessionInfo sessions[MAX_SESSIONS];
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //Worker Registry
-#define MAX_WORKERS 3
+#define MAX_WORKERS 4
 int worker_sockets[MAX_WORKERS];
 int worker_busy[MAX_WORKERS];
 int workers = 0;
@@ -23,6 +23,7 @@ pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t worker_free_cv = PTHREAD_COND_INITIALIZER;
 
 void *handle_connection(void *arg);
+int auth_user(const char *username, const char *password, const char *expected_role);
 
 int main()
 {
@@ -83,8 +84,6 @@ int main()
         }
 
         pthread_detach(thread_id);
-
-        
     }
     close(server_fd);
     return 0;
@@ -104,6 +103,49 @@ void *handle_connection(void *arg)
         printf("Connection terminated\n");
         close(soc);
         pthread_exit(NULL);
+    }
+
+    if(!auth_user(packet.username, packet.password, packet.role))
+    {
+        packet.type = CMD_AUTH_FAIL;
+        strcpy(packet.data, "Invalid username or password");
+        send(soc, &packet, sizeof(NetworkPacket), 0);
+        printf("Unauthorized Entry Rejected\n");
+        close(soc);
+        pthread_exit(NULL);
+    }
+
+    if(packet.type == CMD_REGISTER_SESSION || packet.type == CMD_SUBMIT_JOB)
+    {
+        if(strcmp(packet.role, "client") != 0)
+        {
+            packet.type = CMD_AUTH_FAIL;
+            strcpy(packet.data, "Do not have permission to submit jobs");
+            send(soc, &packet, sizeof(NetworkPacket), 0);
+            printf("User %s does not have client permissions to submit jobs.\n", packet.username);
+            close(soc);
+            pthread_exit(NULL);
+        }
+    }
+    else if(packet.type == CMD_WORKER_READY)
+    {
+        if(strcmp(packet.role, "worker") != 0)
+        {
+            packet.type = CMD_AUTH_FAIL;
+            strcpy(packet.data, "Do not have 'worker' permission");
+            send(soc, &packet, sizeof(NetworkPacket), 0);
+            printf("User %s does not have worker permissions to join the cluster.\n", packet.username);
+            close(soc);
+            pthread_exit(NULL);
+        }
+    }
+
+    if(packet.type == CMD_REGISTER_SESSION || packet.type == CMD_WORKER_READY)
+    {
+        NetworkPacket success;
+        memset(&success, 0, sizeof(NetworkPacket));
+        success.type = CMD_AUTH_SUCCESS;
+        send(soc, &success, sizeof(NetworkPacket), 0);
     }
 
     if(packet.type == CMD_REGISTER_SESSION)
@@ -168,9 +210,15 @@ void *handle_connection(void *arg)
                         if(packet.is_last_chunk == 1)
                         {
                             sessions[i].processed_files++;
+                            printf("Session %d progress = %d / %d (file=%s)\n",
+                                    sessions[i].session_id,
+                                    sessions[i].processed_files,
+                                    sessions[i].expected_files,
+                                    packet.file_name);
                             if(sessions[i].processed_files == sessions[i].expected_files)
                             {
                                 printf("All files compiled and sent to client successfully. Closing socket for session %d\n", sessions[i].session_id);
+                                shutdown(sessions[i].always_on_socket, SHUT_RDWR);
                                 close(sessions[i].always_on_socket);
                                 sessions[i].is_active = 0;
                             }
@@ -201,9 +249,15 @@ void *handle_connection(void *arg)
                     {
                         send(sessions[i].always_on_socket, &packet, sizeof(NetworkPacket), 0);
                         sessions[i].processed_files++;
+                        printf("Session %d progress = %d / %d (file=%s)\n",
+                                    sessions[i].session_id,
+                                    sessions[i].processed_files,
+                                    sessions[i].expected_files,
+                                    packet.file_name);
                         if(sessions[i].processed_files == sessions[i].expected_files)
                         {
                             printf("Session %d complete (with errors).\n", packet.session_id);
+                            shutdown(sessions[i].always_on_socket, SHUT_RDWR);
                             close(sessions[i].always_on_socket);
                             sessions[i].is_active = 0;
                         }
@@ -248,7 +302,7 @@ void *handle_connection(void *arg)
         pthread_mutex_lock(&worker_mutex);
         while(assigned_worker_soc == -1)
         {
-            for(int i = 0; i<MAX_WORKERS; i++)
+            for(int i = 0; i<workers; i++)
             {
                 if(worker_busy[i] == 0)
                 {
@@ -294,4 +348,38 @@ void *handle_connection(void *arg)
     }
     close(soc);
     pthread_exit(NULL);
+}
+
+int auth_user(const char *username, const char *password, const char *expected_role)
+{
+    int fd = open("users.bin", O_RDONLY);
+    if(fd == -1)
+    {
+        perror("Error opening file, users.bin might not exist");
+        return -1;
+    }
+
+    struct flock lck;
+    lck.l_type = F_RDLCK;
+    lck.l_start = 0;
+    lck.l_whence = SEEK_SET;
+    lck.l_len = 0;
+    fcntl(fd, F_SETLK, &lck);
+
+    UserDetails rec;
+    int is_valid = 0;
+
+    while(read(fd, &rec, sizeof(UserDetails)) == sizeof(UserDetails))
+    {
+        if(strcmp(username, rec.username) == 0 && strcmp(password, rec.password) == 0 && strcmp(expected_role, rec.role) == 0)
+        {
+            is_valid = 1;
+            break;
+        }
+    }
+    lck.l_type = F_UNLCK;
+    fcntl(fd, F_SETLK, &lck);
+
+    close(fd);
+    return is_valid;
 }

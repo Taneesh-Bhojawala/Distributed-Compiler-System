@@ -23,8 +23,17 @@ typedef enum
     CMD_SUBMIT_JOB,
     CMD_RETURN_OBJ,
     CMD_COMPILATION_ERROR,
-    CMD_REGISTER_SESSION
+    CMD_REGISTER_SESSION,
+    CMD_AUTH_SUCCESS,
+    CMD_AUTH_FAIL
 } CommandType;
+
+typedef struct
+{
+    char username[32];
+    char password[32];
+    char role[32];
+} UserDetails;
 
 typedef struct
 {
@@ -33,8 +42,10 @@ typedef struct
     char file_name[256];
     int file_size;
     int is_last_chunk;
-    char role[16];
     char data[MAX_BUFF];
+    char username[32];
+    char password[32];
+    char role[32];
 } NetworkPacket;
 
 static int connect_to_server(const char *ip, int port)

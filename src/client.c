@@ -13,6 +13,8 @@ typedef struct
 {
     char dir_path[512];
     int session_id;
+    char username[32];
+    char password[32];
 } PoolArg;
 
 void *handle_upload(void *arg)
@@ -56,6 +58,9 @@ void *handle_upload(void *arg)
             memset(&packet, 0, sizeof(NetworkPacket));
             packet.type = CMD_SUBMIT_JOB; 
             packet.session_id = args->session_id;
+
+            strcpy(packet.username, args->username);
+            strcpy(packet.password, args->password);
             strcpy(packet.role, "client");
             strcpy(packet.file_name, filename);
 
@@ -76,13 +81,15 @@ void *handle_upload(void *arg)
 
 int main(int argc, char *argv[])
 {
-    if(argc<2)
+    if(argc!=4)
     {
-        printf("Use: %s <directory_name>\n", argv[0]);
+        printf("Use: %s <directory_name> <user_name> <password>\n", argv[0]);
         return -1;
     }
 
     char *dir_path = argv[1];
+    char *username = argv[2];
+    char *password = argv[3];
     int session_id = (int)getpid();
 
     char no_slash_dir[512];
@@ -146,11 +153,28 @@ int main(int argc, char *argv[])
     register_packet.type = CMD_REGISTER_SESSION;
     register_packet.session_id = session_id;
     register_packet.file_size = total_jobs; //used file_size to send the total file count
-    strcpy(register_packet.role, "client_control");
+    strcpy(register_packet.username, username);
+    strcpy(register_packet.password, password);
+    strcpy(register_packet.role, "client");
 
     if(send(always_on_socket, &register_packet, sizeof(NetworkPacket), 0) == -1)
     {
         perror("Failed to register session");
+        close(always_on_socket);
+        return -1;
+    }
+
+    NetworkPacket response;
+    if(recv(always_on_socket, &response, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
+    {
+        printf("Connection dropped by Master during authentication.\n");
+        close(always_on_socket);
+        return -1;
+    }
+
+    if (response.type == CMD_AUTH_FAIL)
+    {
+        printf("Access Denied: %s\n", response.data);
         close(always_on_socket);
         return -1;
     }
@@ -161,6 +185,8 @@ int main(int argc, char *argv[])
     PoolArg arg;
     strcpy(arg.dir_path, dir_path);
     arg.session_id = session_id;
+    strcpy(arg.username, username);
+    strcpy(arg.password, password);
 
     int req_threads;
     if(total_jobs<THREAD_POOL) req_threads = total_jobs;

@@ -1,8 +1,14 @@
 #include "../include/common.h"
 
 
-int main()
+int main(int argc, char *argv[])
 {
+    if(argc != 3)
+    {
+        printf("Use: %s <user_name> <password>\n", argv[0]);
+        return -1;
+    }
+
     int sd = connect_to_server("127.0.0.1", PORT);
     if(sd == -1)
     {
@@ -14,6 +20,8 @@ int main()
     NetworkPacket packet;
     memset(&packet, 0, sizeof(NetworkPacket));
     packet.type = CMD_WORKER_READY;
+    strcpy(packet.username, argv[1]);
+    strcpy(packet.password, argv[2]);
     strcpy(packet.role, "worker");
     
     if(send(sd, &packet, sizeof(NetworkPacket), 0) == -1)
@@ -23,7 +31,22 @@ int main()
         exit(-1);
     }
 
-    printf("\nWorker ready sent. Waiting for job...\n");
+    NetworkPacket response;
+    if(recv(sd, &response, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
+    {
+        printf("Connection dropped by Master during authentication.\n");
+        close(sd);
+        return -1;
+    }
+
+    if (response.type == CMD_AUTH_FAIL)
+    {
+        printf("Access Denied: %s\n", response.data);
+        close(sd);
+        return -1;
+    }
+
+    printf("\nWorker authenticated. Waiting for job...\n");
 
     mkdir("../temp", 0777);
 

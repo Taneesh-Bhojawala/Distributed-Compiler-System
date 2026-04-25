@@ -2,6 +2,7 @@
 /src/master
 /src/client
 /src/worker
+/src/add_user
 /tests/
 /build/
 /temp
