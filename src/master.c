@@ -1,5 +1,20 @@
 #include "../include/common.h"
 
+
+//Session Registry
+#define MAX_SESSIONS 10
+typedef struct
+{
+    int session_id;
+    int always_on_socket;
+    int expected_files;
+    int processed_files;
+    int is_active;
+} SessionInfo;
+SessionInfo sessions[MAX_SESSIONS];
+pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+//Worker Registry
 int worker_sockets[2];
 int worker_busy[2];
 int workers = 0;
@@ -89,8 +104,30 @@ void *handle_connection(void *arg)
         pthread_exit(NULL);
     }
 
+    if(packet.type == CMD_REGISTER_SESSION)
+    {
+        pthread_mutex_lock(&session_mutex);
+        for(int i = 0; i<MAX_SESSIONS; i++)
+        {
+            if(sessions[i].is_active == 0)
+            {
+                sessions[i].is_active = 1;
+                sessions[i].session_id = packet.session_id;
+                sessions[i].always_on_socket = soc;
+                sessions[i].expected_files = packet.file_size;  //not file size, just using it to receive total jobs'
+                sessions[i].processed_files = 0;
+                printf("Session registered: %d with %d expected compiled files\n", packet.session_id, packet.file_size);
+                break;
+            }
+        }
+        pthread_mutex_unlock(&session_mutex);
+        NetworkPacket temp;
+        while(recv(soc, &temp, sizeof(NetworkPacket), 0)){}
+        close(soc);
+        pthread_exit(NULL);
+    }
 
-    if(packet.type == CMD_WORKER_READY)
+    else if(packet.type == CMD_WORKER_READY)
     {
         pthread_mutex_lock(&worker_mutex);
         int worker_id = workers;
@@ -119,6 +156,28 @@ void *handle_connection(void *arg)
                     printf("\n -> Receiving compiled object: %s from Worker %d\n", packet.file_name, worker_id);
                 }
                 write(obj_fd, packet.data, packet.file_size);
+
+                pthread_mutex_lock(&session_mutex);
+                for(int i = 0; i<MAX_SESSIONS; i++)
+                {
+                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id)
+                    {
+                        send(sessions[i].always_on_socket, &packet, sizeof(NetworkPacket), 0);
+                        if(packet.is_last_chunk == 1)
+                        {
+                            sessions[i].processed_files++;
+                            if(sessions[i].processed_files == sessions[i].expected_files)
+                            {
+                                printf("All files compiled and sent to client successfully. Closing socket for session %d\n", sessions[i].session_id);
+                                close(sessions[i].always_on_socket);
+                                sessions[i].is_active = 0;
+                            }
+                        }
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&session_mutex);
+
                 if(packet.is_last_chunk == 1)
                 {
                     printf("Object file saved\n");
@@ -132,8 +191,24 @@ void *handle_connection(void *arg)
             }
             else if(packet.type == CMD_COMPILATION_ERROR)
             {
-                printf("Error: Worker %d failed to compile %s\n", worker_id, packet.file_name);
-                printf("Compiler error message:\n%s\n", packet.data);
+                pthread_mutex_lock(&session_mutex);
+                for(int i = 0; i < MAX_SESSIONS; i++)
+                {
+                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id)
+                    {
+                        send(sessions[i].always_on_socket, &packet, sizeof(NetworkPacket), 0);
+                        sessions[i].processed_files++;
+                        if(sessions[i].processed_files == sessions[i].expected_files)
+                        {
+                            printf("Session %d complete (with errors).\n", packet.session_id);
+                            close(sessions[i].always_on_socket);
+                            sessions[i].is_active = 0;
+                        }
+                        break;
+                    }
+                }
+                pthread_mutex_unlock(&session_mutex);
+
                 pthread_mutex_lock(&worker_mutex);
                 worker_busy[worker_id] = 0;
                 pthread_mutex_unlock(&worker_mutex);
