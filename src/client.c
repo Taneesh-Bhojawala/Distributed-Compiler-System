@@ -37,7 +37,7 @@ void *handle_upload(void *arg)
 
         snprintf(filepath, sizeof(filepath), "%s/%s", args->dir_path, filename);
 
-        int sd = connect_to_server("127.0.0.1", PORT);
+        int sd = connect_to_server("172.20.10.5", PORT);
         if(sd == -1)
         {
             perror("Connection failed");
@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    int always_on_socket = connect_to_server("127.0.0.1", PORT);
+    int always_on_socket = connect_to_server("172.20.10.5", PORT);
     if(always_on_socket == -1)
     {
         perror("Connection to client alwasy on failed");

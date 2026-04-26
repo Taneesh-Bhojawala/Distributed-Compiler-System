@@ -1,6 +1,5 @@
 #include "../include/common.h"
 
-
 //Session Registry
 #define MAX_SESSIONS 10
 typedef struct
@@ -10,12 +9,13 @@ typedef struct
     int expected_files;
     int processed_files;
     int is_active;
+    pthread_mutex_t socket_mutex;
 } SessionInfo;
 SessionInfo sessions[MAX_SESSIONS];
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //Worker Registry
-#define MAX_WORKERS 4
+#define MAX_WORKERS 10
 int worker_sockets[MAX_WORKERS];
 int worker_busy[MAX_WORKERS];
 int workers = 0;
@@ -160,6 +160,7 @@ void *handle_connection(void *arg)
                 sessions[i].always_on_socket = soc;
                 sessions[i].expected_files = packet.file_size;  //not file size, just using it to receive total jobs'
                 sessions[i].processed_files = 0;
+                pthread_mutex_init(&sessions[i].socket_mutex, NULL);
                 printf("Session registered: %d with %d expected compiled files\n", packet.session_id, packet.file_size);
                 break;
             }
@@ -190,81 +191,107 @@ void *handle_connection(void *arg)
 
             if(packet.type == CMD_RETURN_OBJ)
             {
-                if(obj_fd == -1)
-                {
-                    snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
-                    mkdir(dir_path, 0744);
-                    snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
-                    
-                    obj_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                    printf("\n -> Receiving compiled object: %s from Worker %d\n", packet.file_name, worker_id);
-                }
-                write(obj_fd, packet.data, packet.file_size);
-
+                int s_idx = -1;
+                
                 pthread_mutex_lock(&session_mutex);
-                for(int i = 0; i<MAX_SESSIONS; i++)
+                for(int i = 0; i < MAX_SESSIONS; i++) 
                 {
-                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id)
+                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id) 
                     {
-                        send(sessions[i].always_on_socket, &packet, sizeof(NetworkPacket), 0);
-                        if(packet.is_last_chunk == 1)
-                        {
-                            sessions[i].processed_files++;
-                            printf("Session %d progress = %d / %d (file=%s)\n",
-                                    sessions[i].session_id,
-                                    sessions[i].processed_files,
-                                    sessions[i].expected_files,
-                                    packet.file_name);
-                            if(sessions[i].processed_files == sessions[i].expected_files)
-                            {
-                                printf("All files compiled and sent to client successfully. Closing socket for session %d\n", sessions[i].session_id);
-                                shutdown(sessions[i].always_on_socket, SHUT_RDWR);
-                                close(sessions[i].always_on_socket);
-                                sessions[i].is_active = 0;
-                            }
-                        }
+                        s_idx = i;
                         break;
                     }
                 }
                 pthread_mutex_unlock(&session_mutex);
 
-                if(packet.is_last_chunk == 1)
+                if (s_idx != -1) 
                 {
-                    printf("Object file saved\n");
-                    close(obj_fd);
-                    obj_fd = -1;
+                    if(obj_fd == -1)
+                    {
+                        pthread_mutex_lock(&sessions[s_idx].socket_mutex);
+                        
+                        snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
+                        mkdir(dir_path, 0744);
+                        snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
+                        
+                        obj_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        printf("\n -> Receiving compiled object: %s from Worker %d\n", packet.file_name, worker_id);
+                    }
+                    
+                    write(obj_fd, packet.data, packet.file_size);
 
-                    pthread_mutex_lock(&worker_mutex);
-                    worker_busy[worker_id] = 0;
-                    pthread_cond_signal(&worker_free_cv);
-                    pthread_mutex_unlock(&worker_mutex);
+                    send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
+
+                    if(packet.is_last_chunk == 1)
+                    {
+                        printf("Object file saved\n");
+                        close(obj_fd);
+                        obj_fd = -1;
+
+                        pthread_mutex_lock(&session_mutex);
+                        sessions[s_idx].processed_files++;
+                        printf("Session %d progress = %d / %d (file=%s)\n",
+                                sessions[s_idx].session_id,
+                                sessions[s_idx].processed_files,
+                                sessions[s_idx].expected_files,
+                                packet.file_name);
+                                
+                        if(sessions[s_idx].processed_files == sessions[s_idx].expected_files)
+                        {
+                            printf("All files compiled and sent to client successfully. Closing socket for session %d\n", sessions[s_idx].session_id);
+                            shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
+                            close(sessions[s_idx].always_on_socket);
+                            sessions[s_idx].is_active = 0;
+                        }
+                        pthread_mutex_unlock(&session_mutex);
+
+                        pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
+
+                        pthread_mutex_lock(&worker_mutex);
+                        worker_busy[worker_id] = 0;
+                        pthread_cond_signal(&worker_free_cv);
+                        pthread_mutex_unlock(&worker_mutex);
+                    }
                 }
             }
             else if(packet.type == CMD_COMPILATION_ERROR)
             {
+                int s_idx = -1;
+                
                 pthread_mutex_lock(&session_mutex);
-                for(int i = 0; i < MAX_SESSIONS; i++)
+                for(int i = 0; i < MAX_SESSIONS; i++) 
                 {
-                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id)
+                    if(sessions[i].is_active && sessions[i].session_id == packet.session_id) 
                     {
-                        send(sessions[i].always_on_socket, &packet, sizeof(NetworkPacket), 0);
-                        sessions[i].processed_files++;
-                        printf("Session %d progress = %d / %d (file=%s)\n",
-                                    sessions[i].session_id,
-                                    sessions[i].processed_files,
-                                    sessions[i].expected_files,
-                                    packet.file_name);
-                        if(sessions[i].processed_files == sessions[i].expected_files)
-                        {
-                            printf("Session %d complete (with errors).\n", packet.session_id);
-                            shutdown(sessions[i].always_on_socket, SHUT_RDWR);
-                            close(sessions[i].always_on_socket);
-                            sessions[i].is_active = 0;
-                        }
+                        s_idx = i;
                         break;
                     }
                 }
                 pthread_mutex_unlock(&session_mutex);
+
+                if (s_idx != -1) 
+                {
+                    pthread_mutex_lock(&sessions[s_idx].socket_mutex);
+                    send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
+                    pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
+
+                    pthread_mutex_lock(&session_mutex);
+                    sessions[s_idx].processed_files++;
+                    printf("Session %d progress = %d / %d (file=%s)\n",
+                                sessions[s_idx].session_id,
+                                sessions[s_idx].processed_files,
+                                sessions[s_idx].expected_files,
+                                packet.file_name);
+                                
+                    if(sessions[s_idx].processed_files == sessions[s_idx].expected_files)
+                    {
+                        printf("Session %d complete (with errors).\n", packet.session_id);
+                        shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
+                        close(sessions[s_idx].always_on_socket);
+                        sessions[s_idx].is_active = 0;
+                    }
+                    pthread_mutex_unlock(&session_mutex);
+                }
 
                 pthread_mutex_lock(&worker_mutex);
                 worker_busy[worker_id] = 0;
