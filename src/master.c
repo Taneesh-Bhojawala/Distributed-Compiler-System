@@ -1,4 +1,6 @@
 #include "../include/common.h"
+#include <time.h>
+#include <sys/stat.h>
 
 //Session Registry
 #define MAX_SESSIONS 10
@@ -8,6 +10,7 @@ typedef struct
     int always_on_socket;
     int expected_files;
     int processed_files;
+    int error_count;
     int is_active;
     pthread_mutex_t socket_mutex;
 } SessionInfo;
@@ -24,6 +27,10 @@ pthread_cond_t worker_free_cv = PTHREAD_COND_INITIALIZER;
 
 void *handle_connection(void *arg);
 int auth_user(const char *username, const char *password, const char *expected_role);
+void write_global_log(const char *message);
+void write_session_log(const int session_id, const char *message);
+void send_session_log(int s_idx);
+void close_session(int s_idx);
 
 int main()
 {
@@ -38,7 +45,6 @@ int main()
         exit(-1);
     }
 
-    //just for testing right now, as once program ends, the kernel keeps the port occupied for 2 mins
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -59,6 +65,7 @@ int main()
     }
 
     printf("Master listening on port %d...\n", PORT);
+    write_global_log("Master server booted and listening for connections.");
 
     while(1)
     {
@@ -69,9 +76,11 @@ int main()
             continue;
         }
 
-        printf("\n+ New connection from %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        char log_msg[256];
+        snprintf(log_msg, sizeof(log_msg), "New socket connection from %s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        write_global_log(log_msg);
+        printf("\n+ %s\n", log_msg);
 
-        //need to specifically allocte the memory on the heap or else if global is used, it might be overwritten by the next client before the thread actually schedules
         int *new_socket = malloc(sizeof(int));
         *new_socket = client_socket;
 
@@ -97,10 +106,12 @@ void *handle_connection(void *arg)
     NetworkPacket packet;
     char dir_path[300];
     char filepath[1024];
+    char log_buf[512];
 
     if(recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
     {
-        printf("Connection terminated\n");
+        write_global_log("A socket connection was terminated unexpectedly.");
+        printf("A socket connection was terminated unexpectedly.\n");
         close(soc);
         pthread_exit(NULL);
     }
@@ -110,7 +121,11 @@ void *handle_connection(void *arg)
         packet.type = CMD_AUTH_FAIL;
         strcpy(packet.data, "Invalid username or password");
         send(soc, &packet, sizeof(NetworkPacket), 0);
-        printf("Unauthorized Entry Rejected\n");
+        
+        snprintf(log_buf, sizeof(log_buf), "AUTH REJECTED: Invalid credentials for user '%s' (Role: %s)", packet.username, packet.role);
+        write_global_log(log_buf);
+        printf("%s\n", log_buf);
+        
         close(soc);
         pthread_exit(NULL);
     }
@@ -122,7 +137,11 @@ void *handle_connection(void *arg)
             packet.type = CMD_AUTH_FAIL;
             strcpy(packet.data, "Do not have permission to submit jobs");
             send(soc, &packet, sizeof(NetworkPacket), 0);
-            printf("User %s does not have client permissions to submit jobs.\n", packet.username);
+            
+            snprintf(log_buf, sizeof(log_buf), "DENIED: User '%s' lacks client permissions.", packet.username);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+            
             close(soc);
             pthread_exit(NULL);
         }
@@ -134,7 +153,11 @@ void *handle_connection(void *arg)
             packet.type = CMD_AUTH_FAIL;
             strcpy(packet.data, "Do not have 'worker' permission");
             send(soc, &packet, sizeof(NetworkPacket), 0);
-            printf("User %s does not have worker permissions to join the cluster.\n", packet.username);
+            
+            snprintf(log_buf, sizeof(log_buf), "DENIED: User '%s' lacks worker permissions.", packet.username);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+            
             close(soc);
             pthread_exit(NULL);
         }
@@ -158,10 +181,15 @@ void *handle_connection(void *arg)
                 sessions[i].is_active = 1;
                 sessions[i].session_id = packet.session_id;
                 sessions[i].always_on_socket = soc;
-                sessions[i].expected_files = packet.file_size;  //not file size, just using it to receive total jobs'
+                sessions[i].expected_files = packet.file_size;  
                 sessions[i].processed_files = 0;
+                sessions[i].error_count = 0;
                 pthread_mutex_init(&sessions[i].socket_mutex, NULL);
-                printf("Session registered: %d with %d expected compiled files\n", packet.session_id, packet.file_size);
+                
+                snprintf(log_buf, sizeof(log_buf), "SESSION STARTED: ID %d expecting %d files.", packet.session_id, packet.file_size);
+                write_global_log(log_buf);
+                write_session_log(packet.session_id, "--- Session Registered Successfully ---");
+                printf("%s\n", log_buf);
                 break;
             }
         }
@@ -180,7 +208,10 @@ void *handle_connection(void *arg)
         worker_busy[worker_id] = 0;
         workers++;
 
-        printf("\nWorker %d connected. Total workers: %d\n", worker_id, workers);
+        snprintf(log_buf, sizeof(log_buf), "WORKER JOINED: Node assigned ID %d. Total cluster size: %d", worker_id, workers);
+        write_global_log(log_buf);
+        printf("%s\n", log_buf);
+        
         pthread_mutex_unlock(&worker_mutex);
 
         int obj_fd = -1;
@@ -215,7 +246,10 @@ void *handle_connection(void *arg)
                         snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
                         
                         obj_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                        printf("\n -> Receiving compiled object: %s from Worker %d\n", packet.file_name, worker_id);
+                        
+                        snprintf(log_buf, sizeof(log_buf), "[RECV] Object file %s returned by Worker %d for Session %d", packet.file_name, worker_id, packet.session_id);
+                        write_global_log(log_buf);
+                        printf("%s\n", log_buf);
                     }
                     
                     write(obj_fd, packet.data, packet.file_size);
@@ -224,25 +258,17 @@ void *handle_connection(void *arg)
 
                     if(packet.is_last_chunk == 1)
                     {
-                        printf("Object file saved\n");
                         close(obj_fd);
                         obj_fd = -1;
 
                         pthread_mutex_lock(&session_mutex);
                         sessions[s_idx].processed_files++;
-                        printf("Session %d progress = %d / %d (file=%s)\n",
-                                sessions[s_idx].session_id,
-                                sessions[s_idx].processed_files,
-                                sessions[s_idx].expected_files,
-                                packet.file_name);
+                        
+                        snprintf(log_buf, sizeof(log_buf), "[SUCCESS] Saved %s. Progress: %d/%d", packet.file_name, sessions[s_idx].processed_files, sessions[s_idx].expected_files);
+                        write_session_log(packet.session_id, log_buf);
+                        printf("%s\n", log_buf);
                                 
-                        if(sessions[s_idx].processed_files == sessions[s_idx].expected_files)
-                        {
-                            printf("All files compiled and sent to client successfully. Closing socket for session %d\n", sessions[s_idx].session_id);
-                            shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
-                            close(sessions[s_idx].always_on_socket);
-                            sessions[s_idx].is_active = 0;
-                        }
+                        if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
                         pthread_mutex_unlock(&session_mutex);
 
                         pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
@@ -277,19 +303,13 @@ void *handle_connection(void *arg)
 
                     pthread_mutex_lock(&session_mutex);
                     sessions[s_idx].processed_files++;
-                    printf("Session %d progress = %d / %d (file=%s)\n",
-                                sessions[s_idx].session_id,
-                                sessions[s_idx].processed_files,
-                                sessions[s_idx].expected_files,
-                                packet.file_name);
+                    sessions[s_idx].error_count++;
+                    
+                    snprintf(log_buf, sizeof(log_buf), "[ERROR] Failed to compile %s. Progress: %d/%d", packet.file_name, sessions[s_idx].processed_files, sessions[s_idx].expected_files);
+                    write_session_log(packet.session_id, log_buf);
+                    printf("%s\n", log_buf);
                                 
-                    if(sessions[s_idx].processed_files == sessions[s_idx].expected_files)
-                    {
-                        printf("Session %d complete (with errors).\n", packet.session_id);
-                        shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
-                        close(sessions[s_idx].always_on_socket);
-                        sessions[s_idx].is_active = 0;
-                    }
+                    if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
                     pthread_mutex_unlock(&session_mutex);
                 }
 
@@ -303,12 +323,18 @@ void *handle_connection(void *arg)
         worker_busy[worker_id] = 0;
         pthread_cond_signal(&worker_free_cv);
         pthread_mutex_unlock(&worker_mutex);
-        printf("Worker %d disconnected\n", worker_id);
+        
+        snprintf(log_buf, sizeof(log_buf), "WORKER DISCONNECTED: Node ID %d left the cluster.", worker_id);
+        write_global_log(log_buf);
+        printf("%s\n", log_buf);
     }
 
     else if(packet.type == CMD_SUBMIT_JOB)
     {
-        printf("Client submitted file: %s\n", packet.file_name);
+        snprintf(log_buf, sizeof(log_buf), "[UPLOAD] Receiving source file: %s", packet.file_name);
+        write_session_log(packet.session_id, log_buf);
+        printf("%s\n", log_buf);
+        
         snprintf(dir_path, sizeof(dir_path), "../build/session_%d", packet.session_id);
         mkdir(dir_path, 0744);
         snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
@@ -321,7 +347,6 @@ void *handle_connection(void *arg)
             write(src_fd, packet.data, packet.file_size);
         }
         close(src_fd);
-        printf(" -> Source code %s saved. Finding idle worker...\n", packet.file_name);
 
         int assigned_worker_soc = -1;
         int assigned_worker_id = -1;
@@ -347,8 +372,6 @@ void *handle_connection(void *arg)
         }
         pthread_mutex_unlock(&worker_mutex);
 
-        printf("Worker found\n");
-
         int session_id = packet.session_id;
         char file_name[256];
         strcpy(file_name, packet.file_name);
@@ -370,9 +393,58 @@ void *handle_connection(void *arg)
             if(packet.is_last_chunk == 1) break;
         }
         close(file_fd);
-        printf(" -> Job sent to worker %d.\n", assigned_worker_id);
-
+        
+        snprintf(log_buf, sizeof(log_buf), "[DISPATCH] Routed Session %d file '%s' to Worker %d.", session_id, file_name, assigned_worker_id);
+        write_global_log(log_buf);
+        printf("%s\n", log_buf);
     }
+
+    else if(packet.type == CMD_FETCH_LOG)
+    {
+        if(strcmp(packet.role, "admin") != 0)
+        {
+            packet.type = CMD_AUTH_FAIL;
+            strcpy(packet.data, "Access Denied: Admin privileges required.");
+            send(soc, &packet, sizeof(NetworkPacket), 0);
+            
+            snprintf(log_buf, sizeof(log_buf), "SECURITY: Unauthorized admin access attempt by user '%s'", packet.username);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+            
+            close(soc);
+            pthread_exit(NULL);
+        }
+
+        int log_fd = open("../logs/master_logs.log", O_RDONLY);
+        if(log_fd == -1)
+        {
+            packet.type = CMD_COMPILATION_ERROR; 
+            strcpy(packet.data, "Audit log is empty or missing on server.");
+            send(soc, &packet, sizeof(NetworkPacket), 0);
+        }
+        else
+        {
+            while(1)
+            {
+                memset(&packet, 0, sizeof(NetworkPacket));
+                packet.type = CMD_FETCH_LOG;
+                strcpy(packet.file_name, "master_logs.log");
+
+                packet.file_size = read(log_fd, packet.data, MAX_BUFF - 1);
+                if(packet.file_size < MAX_BUFF - 1) packet.is_last_chunk = 1;
+                else packet.is_last_chunk = 0;
+
+                send(soc, &packet, sizeof(NetworkPacket), 0);
+                if(packet.is_last_chunk == 1) break;
+            }
+            close(log_fd);
+            
+            snprintf(log_buf, sizeof(log_buf), "ADMIN: Global audit log downloaded by admin '%s'", packet.username);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+        }
+    }
+
     close(soc);
     pthread_exit(NULL);
 }
@@ -409,4 +481,99 @@ int auth_user(const char *username, const char *password, const char *expected_r
 
     close(fd);
     return is_valid;
+}
+
+void write_global_log(const char *message)
+{
+    mkdir("../logs", 0755);
+    int fd = open("../logs/master_logs.log", O_WRONLY|O_CREAT|O_APPEND, 0644);
+    if(fd == -1) return;
+
+    struct flock lck;
+    lck.l_type = F_WRLCK;
+    lck.l_whence = SEEK_END;
+    lck.l_len = 0;
+    lck.l_start = 0;
+    fcntl(fd, F_SETLK, &lck);
+
+    time_t curr_time = time(NULL);
+    char *dt = ctime(&curr_time);
+    dt[strlen(dt)-1] = '\0';
+
+    char log_buff[1024];
+    snprintf(log_buff, sizeof(log_buff), "[%s] %s\n", dt, message);
+    write(fd, log_buff, strlen(log_buff));
+
+    lck.l_type = F_UNLCK;
+    fcntl(fd, F_SETLK, &lck);
+    close(fd);
+}
+
+void write_session_log(const int session_id, const char *message)
+{
+    mkdir("../logs", 0755);
+    char filepath[512];
+    snprintf(filepath, sizeof(filepath), "../logs/session_%d.log", session_id);
+    
+    int fd = open(filepath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if(fd == -1) return;
+
+    char log_buffer[512];
+    snprintf(log_buffer, sizeof(log_buffer), "%s\n", message);
+    write(fd, log_buffer, strlen(log_buffer));
+    
+    close(fd);
+}
+
+void send_session_log(int s_idx) 
+{
+    char session_log_path[512];
+    snprintf(session_log_path, sizeof(session_log_path), "../logs/session_%d.log", sessions[s_idx].session_id);
+    
+    int log_fd = open(session_log_path, O_RDONLY);
+    if (log_fd != -1) 
+    {
+        while(1)
+        {
+            NetworkPacket log_packet;
+            memset(&log_packet, 0, sizeof(NetworkPacket));
+            log_packet.type = CMD_RETURN_LOG;
+            
+            log_packet.file_size = read(log_fd, log_packet.data, MAX_BUFF - 1);
+            
+            if(log_packet.file_size < MAX_BUFF - 1) log_packet.is_last_chunk = 1;
+            else log_packet.is_last_chunk = 0;
+            
+            send(sessions[s_idx].always_on_socket, &log_packet, sizeof(NetworkPacket), 0);
+            
+            if(log_packet.is_last_chunk == 1) break;
+        }
+        close(log_fd);
+    }
+}
+
+void close_session(int s_idx) 
+{
+    char log_buf[512];
+
+    if(sessions[s_idx].error_count == 0)
+    {
+        snprintf(log_buf, sizeof(log_buf), "SESSION COMPLETE: Session %d finished compiling all %d files successfully.", sessions[s_idx].session_id, sessions[s_idx].expected_files);
+        write_global_log(log_buf);
+        write_session_log(sessions[s_idx].session_id, "\n--- All Jobs Completed Successfully ---");
+        printf("%s\n", log_buf); 
+    }
+    else
+    {
+        snprintf(log_buf, sizeof(log_buf), "SESSION COMPLETE: Session %d finished with %d ERRORS.", sessions[s_idx].session_id, sessions[s_idx].error_count);
+        write_global_log(log_buf);
+        write_session_log(sessions[s_idx].session_id, "\n--- Session Finished (Some Errors Encountered) ---");
+        printf("%s\n", log_buf); 
+    }
+
+    send_session_log(s_idx);
+    
+    shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
+    close(sessions[s_idx].always_on_socket);
+    sessions[s_idx].is_active = 0;
 }

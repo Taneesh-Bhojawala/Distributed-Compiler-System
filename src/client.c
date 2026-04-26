@@ -37,7 +37,7 @@ void *handle_upload(void *arg)
 
         snprintf(filepath, sizeof(filepath), "%s/%s", args->dir_path, filename);
 
-        int sd = connect_to_server("172.20.10.5", PORT);
+        int sd = connect_to_server("127.0.0.1", PORT);
         if(sd == -1)
         {
             perror("Connection failed");
@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    int always_on_socket = connect_to_server("172.20.10.5", PORT);
+    int always_on_socket = connect_to_server("127.0.0.1", PORT);
     if(always_on_socket == -1)
     {
         perror("Connection to client alwasy on failed");
@@ -242,6 +242,25 @@ int main(int argc, char *argv[])
         else if(result.type == CMD_COMPILATION_ERROR)
         {
             printf("Error compiling file %s with error:\n%s\n", result.file_name, result.data);
+        }
+        else if(result.type == CMD_RETURN_LOG)
+        {
+            char log_filepath[1024];
+            snprintf(log_filepath, sizeof(log_filepath), "%s/%s", compiled_files_dir, "build_log.log");
+            
+            int log_fd = open(log_filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if(log_fd != -1)
+            {
+                write(log_fd, result.data, result.file_size);
+
+                while(result.is_last_chunk == 0)
+                {
+                    recv(always_on_socket, &result, sizeof(NetworkPacket), MSG_WAITALL);
+                    write(log_fd, result.data, result.file_size);
+                }              
+                close(log_fd);
+                printf("\nSession build report successfully saved to: %s\n", log_filepath);
+            }
         }
     }
     close(always_on_socket);

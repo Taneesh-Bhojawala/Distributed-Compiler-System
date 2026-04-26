@@ -9,7 +9,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    int sd = connect_to_server("172.20.10.5", PORT);
+    int sd = connect_to_server("127.0.0.1", PORT);
     if(sd == -1)
     {
         perror("Failed to connect to master");

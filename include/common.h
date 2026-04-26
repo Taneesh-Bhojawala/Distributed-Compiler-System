@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <string.h>
+#include <time.h>
 
 #define MAX_BUFF 65536
 #define PORT 8080
@@ -25,7 +26,9 @@ typedef enum
     CMD_COMPILATION_ERROR,
     CMD_REGISTER_SESSION,
     CMD_AUTH_SUCCESS,
-    CMD_AUTH_FAIL
+    CMD_AUTH_FAIL,
+    CMD_RETURN_LOG,
+    CMD_FETCH_LOG
 } CommandType;
 
 typedef struct
