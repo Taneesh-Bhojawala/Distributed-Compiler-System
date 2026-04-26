@@ -31,9 +31,11 @@ void write_global_log(const char *message);
 void write_session_log(const int session_id, const char *message);
 void send_session_log(int s_idx);
 void close_session(int s_idx);
+void master_admin();
 
 int main()
 {
+    master_admin();
     int server_fd, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
@@ -445,6 +447,60 @@ void *handle_connection(void *arg)
         }
     }
 
+    else if(packet.type == CMD_SHUTDOWN)
+    {
+        if(strcmp(packet.role, "admin") != 0)
+        {
+            snprintf(log_buf, sizeof(log_buf), "SECURITY: Invalid user %s with role %s tried to shutdown Master.", packet.username, packet.role);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+            pthread_exit(NULL);
+        }
+
+        write_global_log("CRITICAL: Master server shutdown triggered by Admin.");
+        printf("\n[!] Shutdown command received from Admin. Terminating server...\n");
+
+        packet.type = CMD_AUTH_SUCCESS;
+        send(soc, &packet, sizeof(NetworkPacket), 0);
+        close(soc);
+        
+        exit(0);
+    }
+
+    else if(packet.type == CMD_ADD_USER)
+    {
+        if(strcmp(packet.role, "admin") != 0)
+        {
+            snprintf(log_buf, sizeof(log_buf), "SECURITY: Invalid user %s with role %s tried to add user.", packet.username, packet.role);
+            write_global_log(log_buf);
+            printf("%s\n", log_buf);
+            pthread_exit(NULL);
+        }
+
+        UserDetails new_user;
+        memset(&new_user, 0, sizeof(UserDetails));
+        sscanf(packet.data, "%s %s %s", new_user.username, new_user.password, new_user.role);
+        int fd = open("users.bin", O_WRONLY|O_APPEND, 0644);
+
+        struct flock lck;
+        lck.l_type = F_WRLCK;
+        lck.l_whence = SEEK_END;
+        lck.l_len = 0;
+        lck.l_start = 0;
+        fcntl(fd, F_SETLK, &lck);
+        write(fd, &new_user, sizeof(UserDetails));
+
+        lck.l_type = F_UNLCK;
+        fcntl(fd, F_SETLK, &lck);
+
+        snprintf(log_buf, sizeof(log_buf), "ADMIN: Added new %s account '%s'.", new_user.role, new_user.username);
+        write_global_log(log_buf);
+        printf("%s\n", log_buf);
+        
+        packet.type = CMD_AUTH_SUCCESS;
+        send(soc, &packet, sizeof(NetworkPacket), 0);
+    }
+
     close(soc);
     pthread_exit(NULL);
 }
@@ -576,4 +632,22 @@ void close_session(int s_idx)
     shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
     close(sessions[s_idx].always_on_socket);
     sessions[s_idx].is_active = 0;
+}
+
+void master_admin()
+{
+    int fd = open("users.bin", O_RDONLY);
+    if(fd == -1)
+    {
+        printf("No users.bin found. Setting default admin account (admin/admin)\n");
+        fd = open("users.bin", O_WRONLY|O_CREAT, 0644);
+        UserDetails default_admin;
+        memset(&default_admin, 0, sizeof(UserDetails));
+        strcpy(default_admin.username, "admin");
+        strcpy(default_admin.password, "admin");
+        strcpy(default_admin.role, "admin");
+
+        write(fd, &default_admin, sizeof(UserDetails));
+    }
+    close(fd);
 }

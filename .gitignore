@@ -3,6 +3,7 @@
 /src/client
 /src/worker
 /src/add_user
+/src/admin
 /tests/
 /build/
 /temp

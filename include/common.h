@@ -28,7 +28,9 @@ typedef enum
     CMD_AUTH_SUCCESS,
     CMD_AUTH_FAIL,
     CMD_RETURN_LOG,
-    CMD_FETCH_LOG
+    CMD_FETCH_LOG,
+    CMD_SHUTDOWN,
+    CMD_ADD_USER
 } CommandType;
 
 typedef struct
@@ -45,10 +47,10 @@ typedef struct
     char file_name[256];
     int file_size;
     int is_last_chunk;
-    char data[MAX_BUFF];
     char username[32];
     char password[32];
     char role[32];
+    char data[MAX_BUFF];
 } NetworkPacket;
 
 static int connect_to_server(const char *ip, int port)
