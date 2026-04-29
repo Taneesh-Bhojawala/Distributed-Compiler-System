@@ -5,7 +5,7 @@
 
 typedef struct
 {
-    char dir_path[512];
+    char dir_path[256];
     int session_id;
     char username[32];
     char password[32];

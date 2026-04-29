@@ -11,6 +11,10 @@ void process_compilation(int sd, int curr_session, char *original_filename, char
         return;
     }
 
+    char *ext = strrchr(original_filename, '.');
+    char *compiler_cmd = "gcc";
+    if(ext != NULL && strcmp(ext, ".cpp") == 0) compiler_cmd = "g++";
+
     int pid = fork();
 
     if(pid == 0)
@@ -19,7 +23,7 @@ void process_compilation(int sd, int curr_session, char *original_filename, char
         dup2(err_pipe[1], STDERR_FILENO);
         close(err_pipe[1]);
         
-        execlp("gcc", "gcc", "-c", temp_src, "-o", temp_obj, NULL);
+        execlp(compiler_cmd, compiler_cmd, "-c", temp_src, "-o", temp_obj, NULL);
         perror("Execlp failed");
         exit(-1);
     } 

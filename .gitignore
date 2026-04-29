@@ -7,3 +7,7 @@
 /build/
 /temp
 /logs
+/master
+/worker
+/client
+/admin

@@ -2,7 +2,7 @@
 
 int auth_user(const char *username, const char *password, const char *expected_role)
 {
-    int fd = open("users.bin", O_RDONLY);
+    int fd = open("./users.bin", O_RDONLY);
     if(fd == -1)
     {
         perror("Error opening file, users.bin might not exist");
@@ -21,10 +21,13 @@ int auth_user(const char *username, const char *password, const char *expected_r
 
     while(read(fd, &rec, sizeof(UserDetails)) == sizeof(UserDetails))
     {
-        if(strcmp(username, rec.username) == 0 && strcmp(password, rec.password) == 0 && strcmp(expected_role, rec.role) == 0)
+        if(strcmp(username, rec.username) == 0 && strcmp(password, rec.password) == 0)
         {
-            is_valid = 1;
-            break;
+            if(strcmp(expected_role, rec.role) == 0 || strcmp(rec.role, "admin") == 0)
+            {
+                is_valid = 1;
+                break;
+            }
         }
     }
     lck.l_type = F_UNLCK;

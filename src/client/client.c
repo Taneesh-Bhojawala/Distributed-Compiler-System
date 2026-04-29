@@ -4,18 +4,45 @@
 
 int main(int argc, char *argv[])
 {
-    if(argc!=4)
+    char dir_path[200];
+    char username[32];
+    char password[32];
+
+    if (argc == 4) 
     {
-        printf("Use: %s <directory_name> <user_name> <password>\n", argv[0]);
+        strcpy(dir_path, argv[1]);
+        strcpy(username, argv[2]);
+        strcpy(password, argv[3]);
+    } 
+    else if (argc == 1) 
+    {
+        printf("      DISTRIBUTED COMPILER\n");
+        printf("Rules & Warnings:\n");
+        printf(" 1. The directory must contain .c and/or .cpp files.\n");
+        printf(" 2. [WARNING] The system will compile mixed C/C++ files perfectly.\n    You must be careful during your final linking phase \n    not mixing the obj files for C/C++ together\n\n");
+
+        printf("Enter the directory path (e.g., ./src): ");
+        scanf("%199s", dir_path);
+
+        printf("Enter your username: ");
+        scanf("%31s", username);
+
+        printf("Enter your password: ");
+        scanf("%31s", password);
+        
+        printf("\nStarting client...\n\n");
+    } 
+    else 
+    {
+        printf("Use Error.\n");
+        printf("Interactive: ./client\n");
+        printf("Args:      ./client <directory> <username> <password>\n");
         return -1;
     }
 
-    char *dir_path = argv[1];
-    char *username = argv[2];
-    char *password = argv[3];
     int session_id = (int)getpid();
 
-    char no_slash_dir[512];
+    char no_slash_dir[200];
     strcpy(no_slash_dir, dir_path);
 
     int len = strlen(no_slash_dir);
@@ -28,10 +55,8 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    char compiled_files_dir[512];
+    char compiled_files_dir[256];
     snprintf(compiled_files_dir, sizeof(compiled_files_dir), "%s_compiled", no_slash_dir);
-
-    mkdir(compiled_files_dir, 0755);
 
     printf("DISTRIBUTED COMPILER CLIENT\n");
     printf("Session ID: %d\n", session_id);
@@ -62,7 +87,7 @@ int main(int argc, char *argv[])
     int always_on_socket = connect_to_server("127.0.0.1", PORT);
     if(always_on_socket == -1)
     {
-        perror("Connection to client alwasy on failed");
+        perror("Connection to master with always on failed");
         return -1;
     }
 
@@ -97,6 +122,8 @@ int main(int argc, char *argv[])
         close(always_on_socket);
         return -1;
     }
+
+    mkdir(compiled_files_dir, 0755);
 
     printf("Session registered. Master is expecting %d files.\n", final_total_jobs);
 
@@ -138,7 +165,7 @@ int main(int argc, char *argv[])
         }
         if(result.type == CMD_RETURN_OBJ)
         {
-            char filepath[1024];
+            char filepath[512];
             snprintf(filepath, sizeof(filepath), "%s/%s", compiled_files_dir, result.file_name);
             
             int obj_fd = open(filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -164,7 +191,7 @@ int main(int argc, char *argv[])
         }
         else if(result.type == CMD_RETURN_LOG)
         {
-            char log_filepath[1024];
+            char log_filepath[512];
             snprintf(log_filepath, sizeof(log_filepath), "%s/%s", compiled_files_dir, "build_log.log");
             
             int log_fd = open(log_filepath, O_WRONLY | O_CREAT | O_TRUNC, 0644);

@@ -2,8 +2,8 @@
 
 void write_global_log(const char *message)
 {
-    mkdir("../../logs", 0755);
-    int fd = open("../../logs/master_logs.log", O_WRONLY|O_CREAT|O_APPEND, 0644);
+    mkdir("./logs", 0755);
+    int fd = open("./logs/master_logs.log", O_WRONLY|O_CREAT|O_APPEND, 0644);
     if(fd == -1) return;
 
     struct flock lck;
@@ -28,9 +28,9 @@ void write_global_log(const char *message)
 
 void write_session_log(const int session_id, const char *message)
 {
-    mkdir("../../logs", 0755);
+    mkdir("./logs", 0755);
     char filepath[512];
-    snprintf(filepath, sizeof(filepath), "../../logs/session_%d.log", session_id);
+    snprintf(filepath, sizeof(filepath), "./logs/session_%d.log", session_id);
     
     int fd = open(filepath, O_WRONLY | O_CREAT | O_APPEND, 0644);
     if(fd == -1) return;

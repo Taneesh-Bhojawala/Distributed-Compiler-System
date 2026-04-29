@@ -1,4 +1,3 @@
-#include "../../include/common.h"
 #include "compiler.h"
 
 int main(int argc, char *argv[])
@@ -34,7 +33,7 @@ int main(int argc, char *argv[])
     }
 
     printf("\nWorker authenticated. Waiting for jobs...\n");
-    mkdir("../../temp", 0777);
+    mkdir("./temp", 0777);
 
     while(1)
     {
@@ -42,8 +41,8 @@ int main(int argc, char *argv[])
         char temp_src[256], temp_obj[256], original_filename[256];
         int curr_session = 0;
 
-        snprintf(temp_src, sizeof(temp_src), "../../temp/worker_%d.c", getpid());
-        snprintf(temp_obj, sizeof(temp_obj), "../../temp/worker_%d.o", getpid());
+        snprintf(temp_src, sizeof(temp_src), "./temp/worker_%d.c", getpid());
+        snprintf(temp_obj, sizeof(temp_obj), "./temp/worker_%d.o", getpid());
 
         while(1)
         {

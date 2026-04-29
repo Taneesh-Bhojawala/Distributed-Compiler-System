@@ -61,7 +61,7 @@ void close_session(int s_idx)
     }
 
     char session_log_path[512];
-    snprintf(session_log_path, sizeof(session_log_path), "../../logs/session_%d.log", sessions[s_idx].session_id);
+    snprintf(session_log_path, sizeof(session_log_path), "./logs/session_%d.log", sessions[s_idx].session_id);
     
     int log_fd = open(session_log_path, O_RDONLY);
     if (log_fd != -1) 
@@ -226,7 +226,7 @@ void *handle_connection(void *arg)
                     {
                         pthread_mutex_lock(&sessions[s_idx].socket_mutex);
                         
-                        snprintf(dir_path, sizeof(dir_path), "../../build/session_%d", packet.session_id);
+                        snprintf(dir_path, sizeof(dir_path), "./build/session_%d", packet.session_id);
                         mkdir(dir_path, 0744);
                         snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
                         
@@ -321,7 +321,7 @@ void *handle_connection(void *arg)
         write_session_log(packet.session_id, log_buf);
         printf("%s\n", log_buf);
         
-        snprintf(dir_path, sizeof(dir_path), "../../build/session_%d", packet.session_id);
+        snprintf(dir_path, sizeof(dir_path), "./build/session_%d", packet.session_id);
         mkdir(dir_path, 0744);
         snprintf(filepath, sizeof(filepath), "%s/%s", dir_path, packet.file_name);
         
@@ -393,7 +393,7 @@ void *handle_connection(void *arg)
             reject(soc, &packet, "Access Denied: Admin permissions required", log_buf);
         }
 
-        int log_fd = open("../../logs/master_logs.log", O_RDONLY);
+        int log_fd = open("./logs/master_logs.log", O_RDONLY);
         if(log_fd == -1)
         {
             packet.type = CMD_COMPILATION_ERROR; 

@@ -31,7 +31,7 @@ void *handle_upload(void *arg)
 {
     PoolArg *args = arg;
     char filename[256];
-    char filepath[1024];
+    char filepath[512];
 
     while(1)
     {
