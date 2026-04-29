@@ -15,8 +15,9 @@
 #include <string.h>
 #include <time.h>
 
-#define MAX_BUFF 65536
+#define MAX_BUFF 4096
 #define PORT 8080
+#define SERVER_IP "127.0.0.1"
 
 typedef enum
 {

@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 
         if(choice == 4) break;
 
-        int sd = connect_to_server("127.0.0.1", PORT);
+        int sd = connect_to_server(SERVER_IP, PORT);
         if(sd == -1)
         {
             printf("Server is offline.\n");

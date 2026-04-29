@@ -47,7 +47,7 @@ void *handle_upload(void *arg)
 
         snprintf(filepath, sizeof(filepath), "%s/%s", args->dir_path, filename);
 
-        int sd = connect_to_server("127.0.0.1", PORT);
+        int sd = connect_to_server(SERVER_IP, PORT);
         if(sd == -1)
         {
             perror("Connection failed");

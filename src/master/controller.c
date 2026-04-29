@@ -18,7 +18,7 @@ SessionInfo sessions[MAX_SESSIONS];
 pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //Worker Registry
-#define MAX_WORKERS 10
+#define MAX_WORKERS 20
 int worker_sockets[MAX_WORKERS];
 int worker_busy[MAX_WORKERS];
 int workers = 0;
@@ -198,8 +198,8 @@ void *handle_connection(void *arg)
         write_global_log(log_buf);
         printf("%s\n", log_buf);
         
-
         int obj_fd = -1;
+        int error_locked = 0;
         while(1)
         {
             ssize_t bytes = recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL);
@@ -282,26 +282,36 @@ void *handle_connection(void *arg)
 
                 if (s_idx != -1) 
                 {
-                    pthread_mutex_lock(&sessions[s_idx].socket_mutex);
-                    send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
-                    pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
-
-                    pthread_mutex_lock(&session_mutex);
-                    sessions[s_idx].processed_files++;
-                    sessions[s_idx].error_count++;
+                    if(error_locked == 0)
+                    {
+                        pthread_mutex_lock(&sessions[s_idx].socket_mutex);
+                        error_locked = 1;
+                    }
                     
-                    snprintf(log_buf, sizeof(log_buf), "[ERROR] Failed to compile %s. Progress: %d/%d", packet.file_name, sessions[s_idx].processed_files, sessions[s_idx].expected_files);
-                    write_session_log(packet.session_id, log_buf);
-                    printf("%s\n", log_buf);
-                                
-                    if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
-                    pthread_mutex_unlock(&session_mutex);
-                }
+                    send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
 
-                pthread_mutex_lock(&worker_mutex);
-                worker_busy[worker_id] = 0;
-                pthread_cond_signal(&worker_free_cv);
-                pthread_mutex_unlock(&worker_mutex);
+                    if(packet.is_last_chunk == 1)
+                    {
+                        pthread_mutex_lock(&session_mutex);
+                        sessions[s_idx].processed_files++;
+                        sessions[s_idx].error_count++;
+                        
+                        snprintf(log_buf, sizeof(log_buf), "[ERROR] Failed to compile %s. Progress: %d/%d", packet.file_name, sessions[s_idx].processed_files, sessions[s_idx].expected_files);
+                        write_session_log(packet.session_id, log_buf);
+                        printf("%s\n", log_buf);
+                                    
+                        if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
+                        pthread_mutex_unlock(&session_mutex);
+
+                        error_locked = 0;
+                        pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
+
+                        pthread_mutex_lock(&worker_mutex);
+                        worker_busy[worker_id] = 0;
+                        pthread_cond_signal(&worker_free_cv);
+                        pthread_mutex_unlock(&worker_mutex);
+                    }
+                }
             }
         }
         pthread_mutex_lock(&worker_mutex);

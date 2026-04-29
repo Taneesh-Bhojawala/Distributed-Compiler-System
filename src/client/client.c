@@ -16,7 +16,7 @@ int main(int argc, char *argv[])
     } 
     else if (argc == 1) 
     {
-        printf("      DISTRIBUTED COMPILER\n");
+        printf("DISTRIBUTED COMPILER\n");
         printf("Rules & Warnings:\n");
         printf(" 1. The directory must contain .c and/or .cpp files.\n");
         printf(" 2. [WARNING] The system will compile mixed C/C++ files perfectly.\n    You must be careful during your final linking phase \n    not mixing the obj files for C/C++ together\n\n");
@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    int always_on_socket = connect_to_server("127.0.0.1", PORT);
+    int always_on_socket = connect_to_server(SERVER_IP, PORT);
     if(always_on_socket == -1)
     {
         perror("Connection to master with always on failed");
@@ -187,7 +187,14 @@ int main(int argc, char *argv[])
         }
         else if(result.type == CMD_COMPILATION_ERROR)
         {
-            printf("Error compiling file %s with error:\n%s\n", result.file_name, result.data);
+            printf("Error compiling file %s with error:\n%s", result.file_name, result.data);
+            
+            while(result.is_last_chunk == 0)
+            {
+                recv(always_on_socket, &result, sizeof(NetworkPacket), MSG_WAITALL);
+                printf("%s", result.data);
+            }
+            printf("\n");
         }
         else if(result.type == CMD_RETURN_LOG)
         {

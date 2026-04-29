@@ -64,17 +64,30 @@ void process_compilation(int sd, int curr_session, char *original_filename, char
         else
         {
             printf("Compilation failed for %s\n", original_filename);
-            memset(&packet, 0, sizeof(NetworkPacket));
-            packet.session_id = curr_session;
-            packet.type = CMD_COMPILATION_ERROR;
-            strcpy(packet.role, "worker");
-            strcpy(packet.file_name, original_filename);
-
-            packet.file_size = read(err_pipe[0], packet.data, MAX_BUFF-1);
-            if(packet.file_size > 0) packet.data[packet.file_size] = '\0';
-            packet.is_last_chunk = 1;
             
-            send(sd, &packet, sizeof(NetworkPacket), 0);
+            // FIXED: Send the error in chunks so the pipe is completely drained
+            while(1)
+            {
+                memset(&packet, 0, sizeof(NetworkPacket));
+                packet.session_id = curr_session;
+                packet.type = CMD_COMPILATION_ERROR;
+                strcpy(packet.role, "worker");
+                strcpy(packet.file_name, original_filename);
+
+                packet.file_size = read(err_pipe[0], packet.data, MAX_BUFF-1);
+                
+                if(packet.file_size < MAX_BUFF - 1) packet.is_last_chunk = 1;
+                else packet.is_last_chunk = 0;
+                
+                // Add a null terminator if it's the last chunk safely
+                if(packet.is_last_chunk == 1 && packet.file_size >= 0 && packet.file_size < MAX_BUFF) 
+                {
+                    packet.data[packet.file_size] = '\0';
+                }
+                
+                send(sd, &packet, sizeof(NetworkPacket), 0);
+                if(packet.is_last_chunk == 1) break;
+            }
         }
         close(err_pipe[0]);
     }
