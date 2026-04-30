@@ -2,34 +2,40 @@
 #include "logger.h"
 #include "auth.h"
 
+//am using the MSG_WAITALL flag in the recv so that in case there is some delay while sending the packets via TCP, it will wait to receive entire
+
 //Session Registry
 #define MAX_SESSIONS 10
 typedef struct
 {
     int session_id;
-    int always_on_socket;
-    int expected_files;
-    int processed_files;
-    int error_count;
-    int is_active;
-    pthread_mutex_t socket_mutex;
+    int always_on_socket;       //the always on socket
+    int expected_files;         //how many expected files
+    int processed_files;        //number of files of that session that have been processed
+    int error_count;            //how many error that oaccured duing compilation
+    int is_active;              //active status
+    pthread_mutex_t socket_mutex;   //per session mutex to protect sending of files over the always on socket
 } SessionInfo;
 SessionInfo sessions[MAX_SESSIONS];
-pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t session_mutex = PTHREAD_MUTEX_INITIALIZER;      //global mutex to protect the session array and the counters
 
 //Worker Registry
 #define MAX_WORKERS 20
-int worker_sockets[MAX_WORKERS];
-int worker_busy[MAX_WORKERS];
-int workers = 0;
+int worker_sockets[MAX_WORKERS];        //sockets for each worker
+int worker_busy[MAX_WORKERS];           //0 = idle, 1 = busy
+int workers = 0;                        //current number of connected workers
+//mutex to protect the worker registry
 pthread_mutex_t worker_mutex = PTHREAD_MUTEX_INITIALIZER;
+//condition variable which is use to signal a free worker
 pthread_cond_t worker_free_cv = PTHREAD_COND_INITIALIZER;
 
+//initializies the global state
 void init()
 {
     for(int i = 0; i<MAX_WORKERS; i++) worker_sockets[i] = -1;
 }
 
+//send a rejection back to the peer, log it, and terminate this handler
 void reject(int soc, NetworkPacket *packet, const char *reject_msg, const char *log_msg)
 {
     packet->type = CMD_AUTH_FAIL;
@@ -40,6 +46,8 @@ void reject(int soc, NetworkPacket *packet, const char *reject_msg, const char *
     close(soc);
     pthread_exit(NULL);
 }
+
+//completion a session: stream session log back to client and free the session slot
 
 void close_session(int s_idx) 
 {
@@ -83,12 +91,14 @@ void close_session(int s_idx)
         }
         close(log_fd);
     }
-    
+    //need to shutdown the socket to free the session slot
     shutdown(sessions[s_idx].always_on_socket, SHUT_RDWR);
     close(sessions[s_idx].always_on_socket);
     sessions[s_idx].is_active = 0;
 }
 
+//primary per-connection handler; a single thread services an accepted socket
+//this handler deals with clients (register/upload), workers (ready/return) and admin commands
 void *handle_connection(void *arg)
 {
     int soc = *(int*) arg;
@@ -99,6 +109,7 @@ void *handle_connection(void *arg)
     char filepath[1024];
     char log_buf[512];
 
+    //receive initial packet which contains credentials and operation type
     if(recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
     {
         write_global_log("A socket connection was terminated unexpectedly.");
@@ -107,12 +118,14 @@ void *handle_connection(void *arg)
         pthread_exit(NULL);
     }
 
+    //authenticate user; auth_user uses file locks internally to read users.bin
     if(!auth_user(packet.username, packet.password, packet.role))
     {
         snprintf(log_buf, sizeof(log_buf), "AUTH REJECTED: Invalid credentials for user '%s' (Role: %s)", packet.username, packet.role);
         reject(soc, &packet, "Invalid username or password", log_buf);
     }
 
+    //simple role based access
     if((packet.type == CMD_REGISTER_SESSION || packet.type == CMD_SUBMIT_JOB) && (strcmp(packet.role, "client") != 0))
     {
         snprintf(log_buf, sizeof(log_buf), "DENIED: User '%s' lacks client permissions.", packet.username);
@@ -124,14 +137,17 @@ void *handle_connection(void *arg)
         reject(soc, &packet, "Do not have 'worker' permission", log_buf);
     }
 
+    //handle the session from client
     if(packet.type == CMD_REGISTER_SESSION)
     {
         int empty_found = -1;
+        //lock session array while searching and allocating a slot
         pthread_mutex_lock(&session_mutex);
         for(int i = 0; i<MAX_SESSIONS; i++)
         {
             if(sessions[i].is_active == 0)
             {
+                //allocate and initialize session state while holding session_mutex
                 sessions[i].is_active = 1;
                 sessions[i].session_id = packet.session_id;
                 sessions[i].always_on_socket = soc;
@@ -150,6 +166,7 @@ void *handle_connection(void *arg)
         }
         pthread_mutex_unlock(&session_mutex);
 
+        //if no slot available, reject immediately
         if(empty_found == -1)
         {
             snprintf(log_buf, sizeof(log_buf), "REJECTED: Client '%s' dropped. Max sessions (%d) reached.", packet.username, MAX_SESSIONS);
@@ -160,16 +177,20 @@ void *handle_connection(void *arg)
         success.type = CMD_AUTH_SUCCESS;
         send(soc, &success, sizeof(NetworkPacket), 0);
 
+        //client will upload files using new short-lived connections per file,
+        //so drain this persistent socket until the client closes it
         NetworkPacket temp;
         while(recv(soc, &temp, sizeof(NetworkPacket), 0)){}
         close(soc);
         pthread_exit(NULL);
     }
 
+    //handle the worker readiness
     else if(packet.type == CMD_WORKER_READY)
     {
         pthread_mutex_lock(&worker_mutex);
         int worker_id = -1;
+        //find empty worker slot and register the worker socket while holding the mutex to avoid race
         for(int i = 0; i<MAX_WORKERS; i++)
         {
             if(worker_sockets[i] == -1)
@@ -198,8 +219,10 @@ void *handle_connection(void *arg)
         write_global_log(log_buf);
         printf("%s\n", log_buf);
         
-        int obj_fd = -1;
-        int error_locked = 0;
+        int obj_fd = -1;        //file descriptor for object currently being written
+        int error_locked = 0;   //flag to know if session socket has been locked for streaming errors
+
+        //worker main loop: receive returned objects and compilation errors for sessions
         while(1)
         {
             ssize_t bytes = recv(soc, &packet, sizeof(NetworkPacket), MSG_WAITALL);
@@ -209,6 +232,7 @@ void *handle_connection(void *arg)
             {
                 int s_idx = -1;
                 
+                //find the session index for this returned object (guarded by session_mutex)
                 pthread_mutex_lock(&session_mutex);
                 for(int i = 0; i < MAX_SESSIONS; i++) 
                 {
@@ -222,8 +246,10 @@ void *handle_connection(void *arg)
 
                 if (s_idx != -1) 
                 {
+                    //open output file for object if first chunk; protect socket/file writing with per-session mutex
                     if(obj_fd == -1)
                     {
+                        //lock per-session socket to prevent simultaneous sending/writing by other workers
                         pthread_mutex_lock(&sessions[s_idx].socket_mutex);
                         
                         snprintf(dir_path, sizeof(dir_path), "./build/session_%d", packet.session_id);
@@ -237,12 +263,16 @@ void *handle_connection(void *arg)
                         printf("%s\n", log_buf);
                     }
                     
+                    //append chunk to the object file
                     write(obj_fd, packet.data, packet.file_size);
 
+                    //forward the same chunk to the client's always-on socket
+                    //because we hold sessions[s_idx].socket_mutex, this send is serialized relative to other workers
                     send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
 
                     if(packet.is_last_chunk == 1)
                     {
+                        //finalize object file and update session progress (protected by session_mutex)
                         close(obj_fd);
                         obj_fd = -1;
 
@@ -256,8 +286,10 @@ void *handle_connection(void *arg)
                         if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
                         pthread_mutex_unlock(&session_mutex);
 
+                        //unlock per-session socket so other workers can stream further files/errors
                         pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
 
+                        //mark worker free and notify any dispatcher waiting for workers
                         pthread_mutex_lock(&worker_mutex);
                         worker_busy[worker_id] = 0;
                         pthread_cond_signal(&worker_free_cv);
@@ -268,7 +300,7 @@ void *handle_connection(void *arg)
             else if(packet.type == CMD_COMPILATION_ERROR)
             {
                 int s_idx = -1;
-                
+                //locate the session index for which this error belongs
                 pthread_mutex_lock(&session_mutex);
                 for(int i = 0; i < MAX_SESSIONS; i++) 
                 {
@@ -282,16 +314,18 @@ void *handle_connection(void *arg)
 
                 if (s_idx != -1) 
                 {
+                    //lock the session socket once before streaming multi-chunk error text
                     if(error_locked == 0)
                     {
                         pthread_mutex_lock(&sessions[s_idx].socket_mutex);
                         error_locked = 1;
                     }
-                    
+                    //stream error chunk to client
                     send(sessions[s_idx].always_on_socket, &packet, sizeof(NetworkPacket), 0);
 
                     if(packet.is_last_chunk == 1)
                     {
+                        //on final chunk, update counters while holding session_mutex
                         pthread_mutex_lock(&session_mutex);
                         sessions[s_idx].processed_files++;
                         sessions[s_idx].error_count++;
@@ -302,7 +336,8 @@ void *handle_connection(void *arg)
                                     
                         if(sessions[s_idx].processed_files == sessions[s_idx].expected_files) close_session(s_idx);
                         pthread_mutex_unlock(&session_mutex);
-
+                        
+                        //release per-session socket lock and mark worker free
                         error_locked = 0;
                         pthread_mutex_unlock(&sessions[s_idx].socket_mutex);
 
@@ -314,6 +349,7 @@ void *handle_connection(void *arg)
                 }
             }
         }
+        //worker disconnected: remove from registry under worker_mutex
         pthread_mutex_lock(&worker_mutex);
         worker_sockets[worker_id] = -1;
         worker_busy[worker_id] = 0;
@@ -325,6 +361,7 @@ void *handle_connection(void *arg)
         printf("%s\n", log_buf);
     }
 
+    //handle client submitting a source file
     else if(packet.type == CMD_SUBMIT_JOB)
     {
         snprintf(log_buf, sizeof(log_buf), "[UPLOAD] Receiving source file: %s", packet.file_name);
@@ -345,6 +382,7 @@ void *handle_connection(void *arg)
         }
         close(src_fd);
 
+        //dispatcher: find an available worker; wait on condition variable if all busy
         int assigned_worker_soc = -1;
         int assigned_worker_id = -1;
 
@@ -355,6 +393,7 @@ void *handle_connection(void *arg)
             {
                 if(worker_sockets[i] != -1 && worker_busy[i] == 0)
                 {
+                    //claim the worker by setting busy flag while holding worker_mutex
                     worker_busy[i] = 1;
                     assigned_worker_soc = worker_sockets[i];
                     assigned_worker_id = i;
@@ -366,14 +405,18 @@ void *handle_connection(void *arg)
                 break;
             }
 
+            //no worker available yet; log and wait to be signaled when a worker becomes free
             snprintf(log_buf, sizeof(log_buf), "[QUEUE] All workers busy. Waiting to dispatch: %s", packet.file_name);
             write_global_log(log_buf);
             printf("\033[1;33m%s\033[0m\n", log_buf);
 
+            //pthread_cond_wait atomically releases worker_mutex and sleeps,
+            //reacquiring worker_mutex when signaled. this prevents busy-wait races.
             pthread_cond_wait(&worker_free_cv, &worker_mutex);
         }
         pthread_mutex_unlock(&worker_mutex);
 
+        //prepare to stream saved source file to the chosen worker
         int session_id = packet.session_id;
         char file_name[256];
         strcpy(file_name, packet.file_name);
@@ -401,6 +444,7 @@ void *handle_connection(void *arg)
         printf("%s\n", log_buf);
     }
 
+    //handle admin fetching master log
     else if(packet.type == CMD_FETCH_LOG)
     {
         if(strcmp(packet.role, "admin") != 0)
@@ -421,6 +465,13 @@ void *handle_connection(void *arg)
         }
         else
         {
+            //use file lock to serialize access to the master log while reading
+            struct flock read_lock;
+            read_lock.l_type = F_RDLCK;
+            read_lock.l_whence = SEEK_SET;
+            read_lock.l_start = 0;
+            read_lock.l_len = 0;
+            fcntl(log_fd, F_SETLKW, &read_lock);
             while(1)
             {
                 memset(&packet, 0, sizeof(NetworkPacket));
@@ -434,6 +485,8 @@ void *handle_connection(void *arg)
                 send(soc, &packet, sizeof(NetworkPacket), 0);
                 if(packet.is_last_chunk == 1) break;
             }
+            read_lock.l_type = F_UNLCK;
+            fcntl(log_fd, F_SETLK, &read_lock);
             close(log_fd);
             
             snprintf(log_buf, sizeof(log_buf), "ADMIN: Global audit log downloaded by admin '%s'", admin_name);
@@ -442,6 +495,7 @@ void *handle_connection(void *arg)
         }
     }
 
+    //handle admin shutdown command
     else if(packet.type == CMD_SHUTDOWN)
     {
         if(strcmp(packet.role, "admin") != 0)
@@ -460,6 +514,7 @@ void *handle_connection(void *arg)
         exit(0);
     }
 
+    //handle admin adding new user
     else if(packet.type == CMD_ADD_USER)
     {
         if(strcmp(packet.role, "admin") != 0)
@@ -473,6 +528,7 @@ void *handle_connection(void *arg)
         sscanf(packet.data, "%s %s %s", new_user.username, new_user.password, new_user.role);
         int fd = open("users.bin", O_WRONLY|O_APPEND, 0644);
 
+        //protect writes to users.bin using file locking; auth_user uses read locks
         struct flock lck;
         lck.l_type = F_WRLCK;
         lck.l_whence = SEEK_END;

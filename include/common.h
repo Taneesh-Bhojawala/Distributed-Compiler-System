@@ -1,6 +1,7 @@
 #ifndef COMMON_H
 #define COMMON_H
 
+//All the required libraries
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -15,24 +16,24 @@
 #include <string.h>
 #include <time.h>
 
-#define MAX_BUFF 4096
-#define PORT 8080
-#define SERVER_IP "127.0.0.1"
+#define MAX_BUFF 4096           //buffer size for the network packet
+#define PORT 8080               //socket port
+#define SERVER_IP "127.0.0.1"   //master ip address
 
 typedef enum
 {
-    CMD_WORKER_READY,
-    CMD_SUBMIT_JOB,
-    CMD_RETURN_OBJ,
-    CMD_COMPILATION_ERROR,
-    CMD_REGISTER_SESSION,
-    CMD_AUTH_SUCCESS,
-    CMD_AUTH_FAIL,
-    CMD_RETURN_LOG,
-    CMD_FETCH_LOG,
-    CMD_SHUTDOWN,
-    CMD_ADD_USER
-} CommandType;
+    CMD_WORKER_READY,           //sent by worker to indicate readiness
+    CMD_SUBMIT_JOB,             //sent by client while sending the c/cpp files
+    CMD_RETURN_OBJ,             //sent by workers while sending back the obj files
+    CMD_COMPILATION_ERROR,      //sent by workers if there was compilaltion error
+    CMD_REGISTER_SESSION,       //sent by client at the very begining to register the session
+    CMD_AUTH_SUCCESS,           //sent by master if authenticaion was a success
+    CMD_AUTH_FAIL,              //sent by master if authenticaion was a failure
+    CMD_RETURN_LOG,             //sent by master to client while sending  the build log
+    CMD_FETCH_LOG,              //used by admin and master while transfer of master log
+    CMD_SHUTDOWN,               //sent by admin to shutdown the master server instantly
+    CMD_ADD_USER                //sent by admin to add user
+} CommandType;      //all the different commands that are sent with the network packet to indicate what is happening
 
 typedef struct
 {
@@ -52,8 +53,10 @@ typedef struct
     char password[32];
     char role[32];
     char data[MAX_BUFF];
-} NetworkPacket;
+} NetworkPacket;            //the network packet used everytime something is sent using sockets
 
+
+//common function used by all to connect to the server
 static int connect_to_server(const char *ip, int port)
 {
     int sd = socket(AF_INET, SOCK_STREAM, 0);

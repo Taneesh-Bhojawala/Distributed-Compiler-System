@@ -11,6 +11,7 @@ int main()
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
+    //create listening socket (IPv4, stream)
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if(server_fd == -1)
     {
@@ -18,9 +19,11 @@ int main()
         exit(-1);
     }
 
+    //allow quick reuse of the address/port after restart
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
+    //bind address/port for incoming connections
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(PORT);
@@ -31,6 +34,7 @@ int main()
         exit(-1);
     }
 
+    //start listening with system max backlog
     if(listen(server_fd, SOMAXCONN) == -1)
     {
         perror("Listen failed");
@@ -40,6 +44,7 @@ int main()
     printf("Master listening on port %d...\n", PORT);
     write_global_log("Master server booted and listening for connections.");
 
+    //main accept loop: accept connections and hand them to handler threads
     while(1)
     {
         client_socket = accept(server_fd, (struct sockaddr *) &client_addr, &addr_len);
@@ -54,9 +59,12 @@ int main()
         write_global_log(log_msg);
         printf("\n+ %s\n", log_msg);
 
+        //allocate socket descriptor on heap so thread can own a copy safely
+        //this avoids races on a shared local variable and allows immediate loop reuse
         int *new_socket = malloc(sizeof(int));
         *new_socket = client_socket;
 
+        //create a detached thread to handle this connection
         pthread_t thread_id;
         if(pthread_create(&thread_id, NULL, handle_connection, (void *) new_socket)!=0)
         {
@@ -65,6 +73,7 @@ int main()
             close(client_socket);
         }
 
+        //detach the thread so resources are reclaimed automatically on exit
         pthread_detach(thread_id);
     }
     close(server_fd);

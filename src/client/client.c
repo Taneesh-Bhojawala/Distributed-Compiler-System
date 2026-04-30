@@ -1,5 +1,11 @@
 #include "uploader.h"
-
+/**
+ * client.c
+ * Scan for c/cpp files
+ * registers session with master
+ * uploads the source files using a thread pool
+ * receives the compiled object files and the build log and save them locally
+ */
 #define THREAD_POOL 20
 
 int main(int argc, char *argv[])
@@ -13,7 +19,8 @@ int main(int argc, char *argv[])
         strcpy(dir_path, argv[1]);
         strcpy(username, argv[2]);
         strcpy(password, argv[3]);
-    } 
+    }
+    //interactive
     else if (argc == 1) 
     {
         printf("DISTRIBUTED COMPILER\n");
@@ -39,7 +46,7 @@ int main(int argc, char *argv[])
         printf("Args:      ./client <directory> <username> <password>\n");
         return -1;
     }
-
+    //each client will use the pid only as the unique session id
     int session_id = (int)getpid();
 
     char no_slash_dir[200];
@@ -48,6 +55,7 @@ int main(int argc, char *argv[])
     int len = strlen(no_slash_dir);
     if(len>0 && no_slash_dir[len-1] == '/') no_slash_dir[len-1] = '\0';
 
+    //opening the directory to scan through
     DIR *dir = opendir(dir_path);
     if(dir == NULL)
     {
@@ -55,6 +63,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    //local directory where everything will be saved
     char compiled_files_dir[256];
     snprintf(compiled_files_dir, sizeof(compiled_files_dir), "%s_compiled", no_slash_dir);
 
@@ -63,6 +72,7 @@ int main(int argc, char *argv[])
     printf("Starting scan to upload files from directory: %s...\n", dir_path);
     printf("Compiled files will be save to %s\n", compiled_files_dir);
 
+    //complete the scan and add the files to the queue for upload
     struct dirent *entry;
     while((entry = readdir(dir)) != NULL)
     {
@@ -76,6 +86,7 @@ int main(int argc, char *argv[])
     }
     closedir(dir);
 
+    //get the total number of job that will be needed
     int final_total_jobs = get_total_jobs();
 
     if(final_total_jobs == 0)
@@ -84,6 +95,9 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    //create an always on socket with the master over which authentication and the obj files will be received
+    //if it were being recevied over the same connection over which it was sent, that thread would have
+    //been blocked till compilation didnt happen and the file was not received. This method prevents this issue
     int always_on_socket = connect_to_server(SERVER_IP, PORT);
     if(always_on_socket == -1)
     {
@@ -91,6 +105,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    //register the client
     NetworkPacket register_packet;
     memset(&register_packet, 0, sizeof(NetworkPacket));
 
@@ -108,6 +123,7 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    //wait for the authentication 
     NetworkPacket response;
     if(recv(always_on_socket, &response, sizeof(NetworkPacket), MSG_WAITALL) <= 0)
     {
@@ -123,10 +139,12 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    //create the local directory
     mkdir(compiled_files_dir, 0755);
 
     printf("Session registered. Master is expecting %d files.\n", final_total_jobs);
 
+    //start the thread pool to perform the uploads
     pthread_t threads[THREAD_POOL];
     PoolArg arg;
     strcpy(arg.dir_path, dir_path);
@@ -146,6 +164,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    //wait for all the threads to complete the uploads
     for(int i = 0; i<req_threads; i++)
     {
         pthread_join(threads[i], NULL);
@@ -153,6 +172,7 @@ int main(int argc, char *argv[])
 
     printf("Files uploaded successfully! Waiting for compilation...\n");
 
+    //wait on the always on socket for the compile files, errors and logs
     NetworkPacket result;
     while(1)
     {
@@ -165,6 +185,7 @@ int main(int argc, char *argv[])
         }
         if(result.type == CMD_RETURN_OBJ)
         {
+            //construct the file path for the local obj file
             char filepath[512];
             snprintf(filepath, sizeof(filepath), "%s/%s", compiled_files_dir, result.file_name);
             
@@ -175,6 +196,7 @@ int main(int argc, char *argv[])
                 continue;
             }
 
+            //save the obj file chunk by chunk
             write(obj_fd, result.data, result.file_size);
             
             while(result.is_last_chunk == 0)
@@ -185,6 +207,7 @@ int main(int argc, char *argv[])
             close(obj_fd);
             printf("Saved compiled object to: %s\n", filepath);
         }
+        //handle the compilation error
         else if(result.type == CMD_COMPILATION_ERROR)
         {
             printf("Error compiling file %s with error:\n%s", result.file_name, result.data);
@@ -196,6 +219,7 @@ int main(int argc, char *argv[])
             }
             printf("\n");
         }
+        //save the build log report to the same compiled files directory
         else if(result.type == CMD_RETURN_LOG)
         {
             char log_filepath[512];

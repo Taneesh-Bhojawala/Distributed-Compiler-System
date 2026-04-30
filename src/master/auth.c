@@ -1,5 +1,10 @@
 #include "auth.h"
 
+//Authenticate a user by checking ./users.bin for matching username/password.
+//expected_role: role required for this action (e.g., "client", "worker", "admin").
+//Returns:  1 on success (authenticated),
+//           0 on failure (not found / wrong credentials),
+//          -1 on error opening the users file.
 int auth_user(const char *username, const char *password, const char *expected_role)
 {
     int fd = open("./users.bin", O_RDONLY);
@@ -8,7 +13,7 @@ int auth_user(const char *username, const char *password, const char *expected_r
         perror("Error opening file, users.bin might not exist");
         return -1;
     }
-
+    //Prepare a read lock to safely read the binary users file(locks entire file)
     struct flock lck;
     lck.l_type = F_RDLCK;
     lck.l_start = 0;
@@ -19,10 +24,12 @@ int auth_user(const char *username, const char *password, const char *expected_r
     UserDetails rec;
     int is_valid = 0;
 
+    //Read each record and compare credentials
     while(read(fd, &rec, sizeof(UserDetails)) == sizeof(UserDetails))
     {
         if(strcmp(username, rec.username) == 0 && strcmp(password, rec.password) == 0)
         {
+            //Accept if role matches expected_role OR stored role is "admin"
             if(strcmp(expected_role, rec.role) == 0 || strcmp(rec.role, "admin") == 0)
             {
                 is_valid = 1;
@@ -30,6 +37,7 @@ int auth_user(const char *username, const char *password, const char *expected_r
             }
         }
     }
+    //release the loack
     lck.l_type = F_UNLCK;
     fcntl(fd, F_SETLK, &lck);
 
@@ -37,6 +45,7 @@ int auth_user(const char *username, const char *password, const char *expected_r
     return is_valid;
 }
 
+//if users.bin does not exist, ensure 1 admin exists
 void master_admin()
 {
     int fd = open("users.bin", O_RDONLY);
