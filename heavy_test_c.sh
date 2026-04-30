@@ -74,11 +74,11 @@ echo "======================================================"
 echo "  PHASE 2: DISTRIBUTED CLUSTER TEST (100 Files)"
 echo "======================================================"
 echo "[*] FIRING CLIENT 1 (50 Files) -> Background Thread"
-time ./client ./tests/heavy_client1_src_c taneesh 1234 &
+time ./client ./tests/heavy_client1_src_c client1 1234 &
 CLIENT1_PID=$!
 
 echo "[*] FIRING CLIENT 2 (50 Files) -> Background Thread"
-time ./client ./tests/heavy_client2_src_c taneesh 1234 &
+time ./client ./tests/heavy_client2_src_c client2 1234 &
 CLIENT2_PID=$!
 
 echo "[*] 100 massive C files are being chunked and distributed!"

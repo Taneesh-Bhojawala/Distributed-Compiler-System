@@ -65,7 +65,6 @@ void process_compilation(int sd, int curr_session, char *original_filename, char
         {
             printf("Compilation failed for %s\n", original_filename);
             
-            // FIXED: Send the error in chunks so the pipe is completely drained
             while(1)
             {
                 memset(&packet, 0, sizeof(NetworkPacket));
@@ -79,7 +78,6 @@ void process_compilation(int sd, int curr_session, char *original_filename, char
                 if(packet.file_size < MAX_BUFF - 1) packet.is_last_chunk = 1;
                 else packet.is_last_chunk = 0;
                 
-                // Add a null terminator if it's the last chunk safely
                 if(packet.is_last_chunk == 1 && packet.file_size >= 0 && packet.file_size < MAX_BUFF) 
                 {
                     packet.data[packet.file_size] = '\0';

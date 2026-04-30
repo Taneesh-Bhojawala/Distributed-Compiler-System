@@ -329,6 +329,7 @@ void *handle_connection(void *arg)
     {
         snprintf(log_buf, sizeof(log_buf), "[UPLOAD] Receiving source file: %s", packet.file_name);
         write_session_log(packet.session_id, log_buf);
+        write_global_log(log_buf);
         printf("%s\n", log_buf);
         
         snprintf(dir_path, sizeof(dir_path), "./build/session_%d", packet.session_id);
@@ -364,6 +365,11 @@ void *handle_connection(void *arg)
             {
                 break;
             }
+
+            snprintf(log_buf, sizeof(log_buf), "[QUEUE] All workers busy. Waiting to dispatch: %s", packet.file_name);
+            write_global_log(log_buf);
+            printf("\033[1;33m%s\033[0m\n", log_buf);
+
             pthread_cond_wait(&worker_free_cv, &worker_mutex);
         }
         pthread_mutex_unlock(&worker_mutex);
@@ -403,6 +409,9 @@ void *handle_connection(void *arg)
             reject(soc, &packet, "Access Denied: Admin permissions required", log_buf);
         }
 
+        char admin_name[256];
+        strcpy(admin_name, packet.username);
+
         int log_fd = open("./logs/master_logs.log", O_RDONLY);
         if(log_fd == -1)
         {
@@ -427,7 +436,7 @@ void *handle_connection(void *arg)
             }
             close(log_fd);
             
-            snprintf(log_buf, sizeof(log_buf), "ADMIN: Global audit log downloaded by admin '%s'", packet.username);
+            snprintf(log_buf, sizeof(log_buf), "ADMIN: Global audit log downloaded by admin '%s'", admin_name);
             write_global_log(log_buf);
             printf("%s\n", log_buf);
         }

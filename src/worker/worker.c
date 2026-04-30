@@ -9,9 +9,13 @@ int main(int argc, char *argv[])
     }
 
     int sd = connect_to_server(SERVER_IP, PORT);
-    if(sd == -1) return -1;
+    if(sd == -1)
+    {
+        perror("Could not connect to server");
+        return -1;
+    }
     
-    printf("\n+ Worker connected to master\n");
+    printf("\n+ Worker connected to master and trying to authenticate\n");
 
     NetworkPacket packet;
     memset(&packet, 0, sizeof(NetworkPacket));
